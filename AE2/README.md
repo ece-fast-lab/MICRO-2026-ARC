@@ -49,7 +49,8 @@ artifact evaluation.
 The setup preflight checks for CMake, GCC/G++, Python 3, libnuma headers, PCI
 utilities, numactl/numastat, msr-tools, PQoS, perf, cgroup v2, the bundled
 kernel modules, and CPU frequency controls. It does not check Matplotlib;
-Figure 4 result processing checks it when plotting. Matching kernel headers
+Figure 4 checks it only immediately before PNG/PDF plotting. Benchmark data
+collection and CSV conversion do not require it. Matching kernel headers
 are checked only for a fallback module build. The reviewer account needs
 passwordless or initially
 interactive `sudo` access for modules, MSRs, sysfs, cgroups, PCI configuration,
@@ -262,6 +263,15 @@ To answer yes to every step without prompts, use the literal reviewer option
 ./sw/build_option_th96/run_fig4_th96.sh all yes
 ```
 
+To collect the raw log and CSV now without using Matplotlib, skip only the
+plotting step:
+
+```bash
+./sw/build_option_th32/run_fig4_th32.sh --skip-plot
+# Noninteractive data collection:
+./sw/build_option_th32/run_fig4_th32.sh all yes --skip-plot
+```
+
 Each threshold has the corresponding entry point
 `run_fig4_th16.sh`, `run_fig4_th32.sh`, `run_fig4_th64.sh`, or
 `run_fig4_th96.sh` in its own build directory.
@@ -283,14 +293,42 @@ an existing canonical raw log without running gcc or moving anything, use:
 ./sw/build_option_th32/run_fig4_th32.sh --skip-benchmark --yes
 ```
 
+### Create the plotting environment
+
+From the `AE2` directory, create this isolated environment once on SPR1. It is
+stored under the reviewer account's home directory, outside the Git clone, and
+therefore does not affect the system NumPy installation:
+
+```bash
+sudo apt update
+sudo apt install -y python3-venv
+python3 -m venv "$HOME/.venvs/micro-2026-arc-plot"
+source "$HOME/.venvs/micro-2026-arc-plot/bin/activate"
+python3 -m pip install --upgrade pip
+python3 -m pip install -r sw/fig4/requirements.txt
+python3 -c 'import sys, numpy, matplotlib; print(sys.executable); print(numpy.__version__, matplotlib.__version__)'
+```
+
+The expected versions are NumPy `1.26.4` and Matplotlib `3.8.4`. With the
+environment still active, plot the previously collected threshold result
+without rerunning gcc:
+
+```bash
+./sw/build_option_th32/run_fig4_th32.sh --skip-benchmark --yes
+```
+
+Use the matching threshold wrapper for threshold 96. In a new login shell,
+activate the same environment again before plotting. Leave it after plotting
+with `deactivate`; benchmark execution itself does not need this environment.
+
 The pipeline leaves these files together in the result directory:
 
 | File | Contents |
 |---|---|
 | `debug_monitor.log` | Raw periodic `/proc/vmstat` counters and `numastat -c base` tables |
 | `debug_monitor.log.txt` | One-second CSV used by the plotter |
-| `memory_usage_migration_traffic.png` | 300-DPI Figure 4 threshold plot |
-| `memory_usage_migration_traffic.pdf` | Vector version of the same plot |
+| `memory_usage_migration_traffic.png` | 300-DPI threshold plot, created by the optional plotting step |
+| `memory_usage_migration_traffic.pdf` | Vector threshold plot, created by the optional plotting step |
 | `sum_status_fail_MBs.sh` | Exact converter copied into the result for provenance |
 | `plot_memory_migration.py` | Exact Matplotlib program copied into the result |
 

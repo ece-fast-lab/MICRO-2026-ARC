@@ -18,7 +18,7 @@ path_exists() {
 usage() {
     local entrypoint="${FIG4_ENTRYPOINT_NAME:-run_fig4_th${THRESHOLD:-32}.sh}"
     cat <<EOF
-Usage: ${entrypoint} [all yes] [--skip-benchmark] [--yes]
+Usage: ${entrypoint} [all yes] [--skip-benchmark] [--skip-plot] [--yes]
 
 Reproduce one Figure 4 threshold in three steps:
   1. Run SPEC CPU2017 gcc (502), Cache-only epoch 400000, 8 copies.
@@ -31,11 +31,15 @@ Options:
   --all-yes           Alias for --yes.
   --skip-benchmark    Reuse the canonical existing debug_monitor.log; never
                       move or rerun the benchmark output.
+  --skip-plot         Run/convert the benchmark data without Matplotlib; use
+                      --skip-benchmark later from the plotting environment.
   -h, --help          Show this help.
 
 Examples:
   ./${entrypoint}
   ./${entrypoint} all yes
+  ./${entrypoint} --skip-plot
+  ./${entrypoint} all yes --skip-plot
   ./${entrypoint} --skip-benchmark
   ./${entrypoint} --skip-benchmark --yes
 EOF
@@ -56,6 +60,7 @@ esac
 
 AUTO_YES=0
 SKIP_BENCHMARK=0
+SKIP_PLOT=0
 
 if (( $# >= 2 )) && [[ "$1" == "all" && "$2" == "yes" ]]; then
     AUTO_YES=1
@@ -69,6 +74,9 @@ while (( $# > 0 )); do
             ;;
         --skip-benchmark)
             SKIP_BENCHMARK=1
+            ;;
+        --skip-plot)
+            SKIP_PLOT=1
             ;;
         -h|--help)
             usage
@@ -112,10 +120,12 @@ confirm_step() {
 
 processing_preflight() {
     command -v python3 >/dev/null 2>&1 || die "python3 is required"
-    python3 -c 'import matplotlib' >/dev/null 2>&1 || \
-        die "Python matplotlib is required (for example: python3 -m pip install matplotlib)"
     [[ -r "$CONVERTER_SOURCE" ]] || die "converter is missing: $CONVERTER_SOURCE"
     [[ -r "$PLOT_SOURCE" ]] || die "plot program is missing: $PLOT_SOURCE"
+}
+
+matplotlib_available() {
+    python3 -c 'import matplotlib' >/dev/null 2>&1
 }
 
 benchmark_preflight() {
@@ -168,6 +178,14 @@ install_processing_tools() {
     cp -- "$CONVERTER_SOURCE" "${RUN_DIR}/sum_status_fail_MBs.sh"
     cp -- "$PLOT_SOURCE" "${RUN_DIR}/plot_memory_migration.py"
     chmod 0755 "${RUN_DIR}/sum_status_fail_MBs.sh" "${RUN_DIR}/plot_memory_migration.py"
+}
+
+print_data_summary() {
+    printf '\nFigure 4 threshold %s data collection completed.\n' "$THRESHOLD"
+    printf '  raw log : %s\n' "$RAW_LOG"
+    printf '  CSV     : %s\n' "$CSV_LOG"
+    printf '  code    : %s, %s\n' \
+        "${RUN_DIR}/sum_status_fail_MBs.sh" "${RUN_DIR}/plot_memory_migration.py"
 }
 
 printf '\nFigure 4 threshold %s configuration\n' "$THRESHOLD"
@@ -234,10 +252,32 @@ install_processing_tools
 bash "${RUN_DIR}/sum_status_fail_MBs.sh" "$RAW_LOG" "$CSV_LOG"
 [[ -s "$CSV_LOG" ]] || die "conversion did not create a nonempty CSV: $CSV_LOG"
 
+if (( SKIP_PLOT == 1 )); then
+    printf '[3/3] Skip plotting as requested; the CSV is ready.\n'
+    print_data_summary
+    printf 'Create/activate the plotting environment described in %s, then run:\n' \
+        "${ARTIFACT_DIR}/README.md"
+    printf '  %s --skip-benchmark --yes\n' \
+        "${BUILD_DIR}/run_fig4_th${THRESHOLD}.sh"
+    exit 0
+fi
+
 if ! confirm_step "[3/3] Plot Local Memory, CXL Memory, and Migration Traffic?"; then
     printf 'Stopped before plotting. CSV is ready: %s\n' "$CSV_LOG"
     exit 0
 fi
+
+if ! matplotlib_available; then
+    printf '\n[3/3] WARNING: Matplotlib is unavailable in the current Python environment.\n' >&2
+    printf 'The benchmark and CSV conversion completed; only PNG/PDF plotting was skipped.\n' >&2
+    print_data_summary
+    printf 'Create/activate the plotting environment described in %s, then run:\n' \
+        "${ARTIFACT_DIR}/README.md"
+    printf '  %s --skip-benchmark --yes\n' \
+        "${BUILD_DIR}/run_fig4_th${THRESHOLD}.sh"
+    exit 0
+fi
+
 python3 "${RUN_DIR}/plot_memory_migration.py" \
     --input "$CSV_LOG" \
     --output-prefix "$PLOT_PREFIX" \
