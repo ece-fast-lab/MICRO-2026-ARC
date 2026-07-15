@@ -11,9 +11,10 @@ cd MICRO_2026_ARC/AE4
 bash set_default/setup_default.sh all
 ```
 
-This detects the BAR/BDF and NUMA layout, builds the four threshold managers,
-loads the modules, and applies the fixed-frequency and CHMU defaults. It does
-not program a POF or reboot the server.
+This detects the BAR/BDF and NUMA layout, validates and loads the bundled
+kernel modules, builds the four threshold managers, and applies the
+fixed-frequency and CHMU defaults. It does not program a POF or reboot the
+server.
 
 Confirm the absolute GAPBS and graph paths in:
 

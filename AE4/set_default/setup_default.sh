@@ -25,7 +25,7 @@ Usage: setup_default.sh <command>
 Commands:
   check    Verify the SPR1 software and custom-kernel prerequisites.
   detect   Detect the PCI BDF, BAR2 path, CXL NUMA node, and CXL PFNs.
-  build    Build pcimem, both kernel modules, and four manager directories.
+  build    Build pcimem/managers; reuse valid bundled kernel modules.
   apply    Apply system defaults, load modules, and initialize CHMU CSRs.
   all      Run check, detect, build, apply, and status in that order.
   status   Print the generated platform configuration and software status.
@@ -62,11 +62,12 @@ require_target_host() {
 }
 
 acquire_exclusive_lock() {
-    local saved_umask
-    saved_umask="$(umask)"
-    umask 000
-    exec 9>"${ARC_LOCK_FILE}" || die "cannot open exclusive lock: ${ARC_LOCK_FILE}"
-    umask "${saved_umask}"
+    if [[ ! -e "${ARC_LOCK_FILE}" ]]; then
+        (umask 000; set -o noclobber; : > "${ARC_LOCK_FILE}") 2>/dev/null || true
+    fi
+    # Open without O_CREAT/O_TRUNC so a lock first created by another UID also
+    # works with Linux protected_regular restrictions in sticky /run/lock.
+    exec 9<"${ARC_LOCK_FILE}" || die "cannot open exclusive lock: ${ARC_LOCK_FILE}"
     flock -n 9 || die "another ARC setup or benchmark command is active on this host"
 }
 
@@ -103,6 +104,84 @@ require_platform_config() {
     done
 }
 
+module_file_matches_running_kernel() {
+    local module_file="$1"
+    local expected_name="$2"
+    local actual_name
+    local module_kernel
+
+    [[ -r "${module_file}" ]] || return 1
+    actual_name="$(modinfo -F name "${module_file}" 2>/dev/null)" || return 1
+    module_kernel="$(modinfo -F vermagic "${module_file}" 2>/dev/null | awk '{print $1}')" || return 1
+    [[ "${actual_name}" == "${expected_name}" && "${module_kernel}" == "$(uname -r)" ]]
+}
+
+bundled_kernel_modules_are_usable() {
+    local page_module="${SW_DIR}/kmod_pgmigrate/page_migrate.ko"
+    local overflow_module="${SW_DIR}/kmod_pac_ofw_buf/pac_ofw_buf.ko"
+    local page_hash
+    local overflow_hash
+
+    [[ "$(uname -r)" == "${BUNDLED_MODULE_KERNEL_RELEASE}" ]] || return 1
+    module_file_matches_running_kernel "${page_module}" page_migrate || return 1
+    module_file_matches_running_kernel "${overflow_module}" pac_ofw_buf || return 1
+    page_hash="$(sha256sum "${page_module}" | awk '{print $1}')"
+    overflow_hash="$(sha256sum "${overflow_module}" | awk '{print $1}')"
+    [[ "${page_hash}" == "${BUNDLED_PAGE_MODULE_SHA256}" &&
+       "${overflow_hash}" == "${BUNDLED_OVERFLOW_MODULE_SHA256}" ]]
+}
+
+stamped_kernel_modules_are_usable() {
+    local require_platform_match="${1:-0}"
+    local page_module="${SW_DIR}/kmod_pgmigrate/page_migrate.ko"
+    local overflow_module="${SW_DIR}/kmod_pac_ofw_buf/pac_ofw_buf.ko"
+    local page_hash
+    local overflow_hash
+
+    [[ -r "${BUILD_CONFIG_FILE}" ]] || return 1
+    module_file_matches_running_kernel "${page_module}" page_migrate || return 1
+    module_file_matches_running_kernel "${overflow_module}" pac_ofw_buf || return 1
+    page_hash="$(sha256sum "${page_module}" | awk '{print $1}')"
+    overflow_hash="$(sha256sum "${overflow_module}" | awk '{print $1}')"
+
+    (
+        # shellcheck source=/dev/null
+        source "${BUILD_CONFIG_FILE}"
+        [[ "${BUILT_KERNEL_RELEASE:-}" == "$(uname -r)" &&
+           "${BUILT_PAGE_MODULE_SHA256:-}" == "${page_hash}" &&
+           "${BUILT_OVERFLOW_MODULE_SHA256:-}" == "${overflow_hash}" ]] || exit 1
+        if [[ "${require_platform_match}" == 1 ]]; then
+            [[ "${BUILT_PCIE_BDF:-}" == "${PCIE_BDF:-}" &&
+               "${BUILT_BAR2_PATH:-}" == "${BAR2_PATH:-}" &&
+               "${BUILT_CXL_MEM_START:-}" == "${CXL_MEM_START:-}" &&
+               "${BUILT_CXL_MEM_PFN:-}" == "${CXL_MEM_PFN:-}" &&
+               "${BUILT_CXL_MEM_NUM_PFN:-}" == "${CXL_MEM_NUM_PFN:-}" &&
+               "${BUILT_CXL_NODE:-}" == "${CXL_NODE:-}" &&
+               "${BUILT_BUFFER_NODE:-}" == "${BUFFER_NODE:-}" ]]
+        fi
+    )
+}
+
+kernel_modules_are_reusable() {
+    local require_platform_match="${1:-0}"
+    REUSABLE_MODULE_SOURCE=""
+
+    if bundled_kernel_modules_are_usable; then
+        if [[ "${require_platform_match}" == 1 ]] &&
+           [[ "${CXL_NODE:-}" != "${BUNDLED_CXL_NODE}" ||
+              "${BUFFER_NODE:-}" != "${BUNDLED_BUFFER_NODE}" ]]; then
+            return 1
+        fi
+        REUSABLE_MODULE_SOURCE="bundled-prebuilt"
+        return 0
+    fi
+    if stamped_kernel_modules_are_usable "${require_platform_match}"; then
+        REUSABLE_MODULE_SOURCE="existing-build"
+        return 0
+    fi
+    return 1
+}
+
 check_requirements() {
     local missing=0
     local command_name
@@ -125,7 +204,7 @@ check_requirements() {
         "memmap=${REQUIRED_MEMMAP}"
     )
 
-    info "checking commands and custom-kernel build files"
+    info "checking commands and kernel-module artifacts"
     if (( EUID != 0 )); then
         required_commands+=(sudo)
     fi
@@ -156,52 +235,58 @@ check_requirements() {
         fi
     done
 
-    if [[ ! -d "${KERNEL_BUILD}" ]]; then
-        warn "matching kernel build directory is missing: ${KERNEL_BUILD}"
-        missing=1
+    if kernel_modules_are_reusable 0; then
+        printf '  OK       kernel modules: %s (%s)\n' \
+            "${SW_DIR}" "${REUSABLE_MODULE_SOURCE}"
+        printf '  SKIP     kernel build tree (valid modules already exist)\n'
     else
-        printf '  OK       kernel build: %s\n' "${KERNEL_BUILD}"
-        if [[ -r "${KERNEL_BUILD}/include/config/kernel.release" ]]; then
-            build_kernel="$(< "${KERNEL_BUILD}/include/config/kernel.release")"
-            if [[ "${build_kernel}" != "${actual_kernel}" ]]; then
-                warn "kernel build release ${build_kernel} does not match running kernel ${actual_kernel}"
+        if [[ ! -d "${KERNEL_BUILD}" ]]; then
+            warn "matching kernel build directory is missing: ${KERNEL_BUILD}"
+            missing=1
+        else
+            printf '  OK       kernel build: %s\n' "${KERNEL_BUILD}"
+            if [[ -r "${KERNEL_BUILD}/include/config/kernel.release" ]]; then
+                build_kernel="$(< "${KERNEL_BUILD}/include/config/kernel.release")"
+                if [[ "${build_kernel}" != "${actual_kernel}" ]]; then
+                    warn "kernel build release ${build_kernel} does not match running kernel ${actual_kernel}"
+                    missing=1
+                fi
+            else
+                warn "kernel build release file is missing: ${KERNEL_BUILD}/include/config/kernel.release"
                 missing=1
             fi
-        else
-            warn "kernel build release file is missing: ${KERNEL_BUILD}/include/config/kernel.release"
-            missing=1
         fi
-    fi
 
-    local cxl_header=""
-    local header_candidate
-    for header_candidate in \
-        "${KERNEL_BUILD}/include/linux/cxl_migrate.h" \
-        "${KERNEL_BUILD}/source/include/linux/cxl_migrate.h"; do
-        if [[ -r "${header_candidate}" ]]; then
-            cxl_header="${header_candidate}"
-            break
-        fi
-    done
-    if [[ -z "${cxl_header}" ]]; then
-        warn "the custom linux/cxl_migrate.h header is missing below ${KERNEL_BUILD}"
-        warn "page_migrate requires the SPR1 6.11.0-mig-offload+ kernel tree"
-        missing=1
-    else
-        printf '  OK       custom header: %s\n' "${cxl_header}"
-    fi
-
-    if [[ ! -r "${KERNEL_BUILD}/Module.symvers" ]]; then
-        warn "kernel Module.symvers is missing: ${KERNEL_BUILD}/Module.symvers"
-        missing=1
-    else
-        local symbol
-        for symbol in cxl_pa_migrate reset_cxl_stats print_cxl_stats; do
-            if ! grep -qw "${symbol}" "${KERNEL_BUILD}/Module.symvers"; then
-                warn "custom kernel symbol is absent from Module.symvers: ${symbol}"
-                missing=1
+        local cxl_header=""
+        local header_candidate
+        for header_candidate in \
+            "${KERNEL_BUILD}/include/linux/cxl_migrate.h" \
+            "${KERNEL_BUILD}/source/include/linux/cxl_migrate.h"; do
+            if [[ -r "${header_candidate}" ]]; then
+                cxl_header="${header_candidate}"
+                break
             fi
         done
+        if [[ -z "${cxl_header}" ]]; then
+            warn "the custom linux/cxl_migrate.h header is missing below ${KERNEL_BUILD}"
+            warn "page_migrate requires the SPR1 6.11.0-mig-offload+ kernel tree"
+            missing=1
+        else
+            printf '  OK       custom header: %s\n' "${cxl_header}"
+        fi
+
+        if [[ ! -r "${KERNEL_BUILD}/Module.symvers" ]]; then
+            warn "kernel Module.symvers is missing: ${KERNEL_BUILD}/Module.symvers"
+            missing=1
+        else
+            local symbol
+            for symbol in cxl_pa_migrate reset_cxl_stats print_cxl_stats; do
+                if ! grep -qw "${symbol}" "${KERNEL_BUILD}/Module.symvers"; then
+                    warn "custom kernel symbol is absent from Module.symvers: ${symbol}"
+                    missing=1
+                fi
+            done
+        fi
     fi
 
     if [[ ! -r /usr/include/numa.h ]]; then
@@ -252,11 +337,11 @@ check_requirements() {
         done
     fi
 
-    if [[ ! -d /sys/devices/system/cpu/cpu63 ]]; then
-        warn "SPR1 CPU topology is incomplete: CPU63 is missing"
+    if [[ ! -d /sys/devices/system/cpu/cpu31 ]]; then
+        warn "SPR1 CPU topology is incomplete: CPU31 is missing"
         missing=1
     else
-        printf '  OK       SPR1 CPUs 0-63 detected\n'
+        printf '  OK       SPR1 CPUs 0-31 detected\n'
     fi
     if [[ ! -e /sys/kernel/mm/numa/demotion_enabled ]]; then
         warn "NUMA demotion control is missing"
@@ -536,6 +621,7 @@ build_software() {
     local temporary_file
     local page_vermagic
     local overflow_vermagic
+    local module_source
 
     if [[ ! -r "${PLATFORM_CONFIG_FILE}" ]]; then
         detect_platform
@@ -547,17 +633,25 @@ build_software() {
     info "building pcimem"
     make -C "${SW_DIR}/pcimem"
 
-    info "building page_migrate for kernel $(uname -r)"
-    make -C "${SW_DIR}/kmod_pgmigrate" \
-        KDIR="${KERNEL_BUILD}" \
-        CXL_MEM_PFN_BEGIN="${CXL_MEM_PFN}" \
-        CXL_MEM_NUM_PFN="${CXL_MEM_NUM_PFN}"
+    if kernel_modules_are_reusable 1; then
+        module_source="${REUSABLE_MODULE_SOURCE}"
+        info "using ${module_source} kernel modules; skipping both module builds"
+    else
+        [[ -d "${KERNEL_BUILD}" ]] || \
+            die "kernel modules are not reusable and the fallback build tree is missing: ${KERNEL_BUILD}"
+        info "building page_migrate for kernel $(uname -r)"
+        make -C "${SW_DIR}/kmod_pgmigrate" \
+            KDIR="${KERNEL_BUILD}" \
+            CXL_MEM_PFN_BEGIN="${CXL_MEM_PFN}" \
+            CXL_MEM_NUM_PFN="${CXL_MEM_NUM_PFN}"
 
-    info "building pac_ofw_buf for CXL node ${CXL_NODE}, buffer node ${BUFFER_NODE}"
-    make -C "${SW_DIR}/kmod_pac_ofw_buf" \
-        KDIR="${KERNEL_BUILD}" \
-        CXL_NODE="${CXL_NODE}" \
-        MEMORY_ALLOC_NODE="${BUFFER_NODE}"
+        info "building pac_ofw_buf for CXL node ${CXL_NODE}, buffer node ${BUFFER_NODE}"
+        make -C "${SW_DIR}/kmod_pac_ofw_buf" \
+            KDIR="${KERNEL_BUILD}" \
+            CXL_NODE="${CXL_NODE}" \
+            MEMORY_ALLOC_NODE="${BUFFER_NODE}"
+        module_source="source-build"
+    fi
 
     for threshold in "${BUILD_THRESHOLDS[@]}"; do
         build_dir="${SW_DIR}/build_option_th${threshold}"
@@ -587,6 +681,7 @@ build_software() {
     {
         printf '#!/usr/bin/env bash\n\n'
         printf '# Generated only after every artifact build succeeds.\n'
+        write_env_value BUILT_MODULE_SOURCE "${module_source}"
         write_env_value BUILT_KERNEL_RELEASE "$(uname -r)"
         write_env_value BUILT_PCIE_BDF "${PCIE_BDF}"
         write_env_value BUILT_BAR2_PATH "${BAR2_PATH}"
@@ -770,6 +865,11 @@ verify_module_builds() {
     # shellcheck source=/dev/null
     source "${BUILD_CONFIG_FILE}"
 
+    case "${BUILT_MODULE_SOURCE:-}" in
+        bundled-prebuilt|existing-build|source-build) ;;
+        *) die "kernel-module build stamp has an unknown source; rerun '$0 build'" ;;
+    esac
+
     [[ "${BUILT_KERNEL_RELEASE:-}" == "$(uname -r)" &&
        "${BUILT_PCIE_BDF:-}" == "${PCIE_BDF}" &&
        "${BUILT_BAR2_PATH:-}" == "${BAR2_PATH}" &&
@@ -786,6 +886,13 @@ verify_module_builds() {
         die "page_migrate.ko changed after the successful build"
     [[ "${overflow_hash}" == "${BUILT_OVERFLOW_MODULE_SHA256:-}" ]] || \
         die "pac_ofw_buf.ko changed after the successful build"
+    if [[ "${BUILT_MODULE_SOURCE}" == bundled-prebuilt ]]; then
+        [[ "${page_hash}" == "${BUNDLED_PAGE_MODULE_SHA256}" &&
+           "${overflow_hash}" == "${BUNDLED_OVERFLOW_MODULE_SHA256}" &&
+           "${CXL_NODE}" == "${BUNDLED_CXL_NODE}" &&
+           "${BUFFER_NODE}" == "${BUNDLED_BUFFER_NODE}" ]] || \
+            die "bundled kernel modules do not match their fixed SPR1 configuration"
+    fi
 
     page_vermagic="$(modinfo -F vermagic "${page_module}" | awk '{print $1}')"
     overflow_vermagic="$(modinfo -F vermagic "${overflow_module}" | awk '{print $1}')"

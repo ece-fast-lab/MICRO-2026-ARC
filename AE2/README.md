@@ -10,10 +10,11 @@ host-specific absolute paths.
 
 | Component | Function | Configuration time |
 |---|---|---|
-| `set_default/setup_default.sh` | Preflight, platform detection, four builds, system defaults, module loading, and CHMU initialization | Setup |
+| `set_default/setup_default.sh` | Preflight, platform detection, prebuilt-module validation, four manager builds, system defaults, module loading, and CHMU initialization | Setup |
 | `sw/migration_manager` | Reads CHMU hot-page data and requests page migration | Build and run |
-| `sw/kmod_pgmigrate` | Exposes the custom-kernel CXL migration interface | Build and setup |
-| `sw/kmod_pac_ofw_buf` | Allocates the PAC overflow buffer on the selected DRAM node | Build and setup |
+| `sw/kmod_pgmigrate` | Bundled `page_migrate.ko` plus source fallback for the custom-kernel migration interface | Setup; fallback build only |
+| `sw/kmod_pac_ofw_buf` | Bundled `pac_ofw_buf.ko` plus source fallback for the DRAM overflow buffer | Setup; fallback build only |
+| `sw/prebuilt_module_source` | Exact legacy source snapshot and hashes for the bundled modules | Provenance only |
 | `sw/pcimem` and `sw/set_para` | Access BAR2; disable/reset/arm tracking; set threshold, epoch, address, and tracker CSRs | Setup and run |
 | `sw/core_pqos` | Reproduces the SPR1 CPU offlining and LLC-way allocation | Benchmark run |
 | `sw/build_option_th{16,32,64,96}` | Reviewer entry points for the four runtime thresholds | Benchmark run |
@@ -28,10 +29,13 @@ compile-time option.
 
 ## SPR1 prerequisites
 
-Use the SPR1 custom `6.11.0-mig-offload+` kernel and its matching build tree.
-`page_migrate.c` requires the non-upstream `linux/cxl_migrate.h` interface and
-will not build against a stock kernel. The running kernel command line must
-contain these exact tokens:
+Use the SPR1 custom `6.11.0-mig-offload+` kernel. This artifact includes the
+two kernel modules built by the original SPR1 setup. Normal setup verifies
+their names, SHA-256 hashes, and vermagic and therefore does not need a kernel
+build tree. A matching build tree with the non-upstream
+`linux/cxl_migrate.h` interface and `Module.symvers` is required only if the
+bundled modules are absent or invalid and a source fallback build is needed.
+The running kernel command line must contain these exact tokens:
 
 ```text
 intel_iommu=on,sm_on iommu=pt no5lvl efi=nosoftreserve memmap=124G$0x180000000
@@ -42,10 +46,12 @@ and the CHMU function to be PCI function `.1`. `ALLOW_NON_SPR1=1` and the
 detection overrides are provided only for an intentional port, not for normal
 artifact evaluation.
 
-The setup preflight checks for CMake, GCC/G++, Python 3 with Matplotlib,
-libnuma headers, PCI utilities, numactl/numastat, msr-tools, PQoS, perf,
-cgroup v2, matching kernel headers, and CPU frequency controls. The reviewer
-account needs passwordless or initially
+The setup preflight checks for CMake, GCC/G++, Python 3, libnuma headers, PCI
+utilities, numactl/numastat, msr-tools, PQoS, perf, cgroup v2, the bundled
+kernel modules, and CPU frequency controls. It does not check Matplotlib;
+Figure 4 result processing checks it when plotting. Matching kernel headers
+are checked only for a fallback module build. The reviewer account needs
+passwordless or initially
 interactive `sudo` access for modules, MSRs, sysfs, cgroups, PCI configuration,
 and MMIO; benchmark runners refresh the authenticated timestamp without
 prompting during long runs.
@@ -68,9 +74,9 @@ bash set_default/setup_default.sh all
 1. Checks the required SPR1 environment.
 2. Detects the CHMU PCI function, BAR2 `resource2`, the memory-only CXL NUMA
    node, the DRAM buffer node, the CXL physical start address, and PFN range.
-3. Builds `pcimem`, both kernel modules, and
-   `build_option_th16`, `build_option_th32`, `build_option_th64`, and
-   `build_option_th96`.
+3. Builds `pcimem` and `build_option_th16`, `build_option_th32`,
+   `build_option_th64`, and `build_option_th96`. It validates and reuses the
+   bundled kernel modules, skipping both module builds.
 4. Sets CPU frequency to 2.0 GHz, disables turbo, locks uncore ratio to
    `0x1919`, enables NUMA demotion and tiering mode, resets swap, loads the
    modules, and initializes the CHMU registers.
@@ -114,7 +120,7 @@ setup's swap reset.
 |---|---|
 | BAR2 `resource2` path | Compiled into each migration manager and used by `pcimem` at runtime |
 | Full PCI BDF | Used at runtime by `setpci` to enable PCI memory space |
-| CXL start, first PFN, PFN count | Passed to all four manager builds and the page-migration module build |
+| CXL start, first PFN, PFN count | Passed to all four manager builds and to a fallback page-module build, if one is required |
 | CXL NUMA node and DRAM buffer node | Select runner source/destination nodes, the manager migration target, and overflow-buffer allocation node |
 | Threshold `16/32/64/96` | Written at runtime to CSR `0xC8` by the selected directory's wrapper |
 | Epoch `400000/400001` | Written at runtime to CSR `0x40`; the LSB selects Cache or CMS mode |
@@ -190,8 +196,8 @@ Replace `th16` with `th32`, `th64`, or `th96` to select another threshold.
 Outputs and logs are stored below that threshold's `output/` directory and are
 ignored by Git.
 
-The runner reproduces the original SPR1 CPU layout: CPUs 0-7 for the workload,
-CPU 20 for the manager, and CPUs 8-63 otherwise offline, with fixed LLC-way
+The runner uses the current SPR1 CPU layout: CPUs 0-7 for the workload, CPU 20
+for the manager, and every other CPU in 8-31 offline, with fixed LLC-way
 allocation. `SKIP_CPU_ISOLATION=1` bypasses that step for debugging only and
 does not reproduce the reported configuration.
 

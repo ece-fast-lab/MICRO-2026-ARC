@@ -20,6 +20,8 @@ sw/build_option_th*/*.log
 sw/pcimem/pcimem
 sw/**/*.o
 sw/**/*.ko
+!sw/kmod_pgmigrate/page_migrate.ko
+!sw/kmod_pac_ofw_buf/pac_ofw_buf.ko
 sw/**/*.cmd
 sw/**/*.mod
 sw/**/*.mod.c

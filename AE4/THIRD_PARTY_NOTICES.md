@@ -6,8 +6,8 @@ in copied components.
 | Component | Notice |
 |---|---|
 | `sw/pcimem` | Copyright Bill Farrow and Jan-Derk Bakker; GPL version 2 or, at the recipient's option, any later version. The license text is retained as `sw/pcimem/COPYING`. |
-| `sw/kmod_pgmigrate/page_migrate.c` | Copyright 2024 Jiyuan Zhang; GPL version 2, as stated in the source header. |
-| `sw/kmod_pac_ofw_buf` | The source declares `MODULE_LICENSE("GPL")`, but the copied file contains no complete copyright/license grant. Confirm redistribution authorization before public release. |
+| `sw/kmod_pgmigrate` | The source and bundled `page_migrate.ko` identify GPL version 2; copyright 2024 Jiyuan Zhang is stated in the source header. The matching legacy source is preserved in `sw/prebuilt_module_source`; the adjacent source is a later maintained revision used only for fallback rebuilding. |
+| `sw/kmod_pac_ofw_buf` | The source and bundled `pac_ofw_buf.ko` declare `MODULE_LICENSE("GPL")`, but the copied source contains no complete copyright/license grant. The matching legacy source is preserved in `sw/prebuilt_module_source`; the adjacent source is a later maintained revision used only for fallback rebuilding. Confirm redistribution authorization before public release. |
 | `sw/migration_manager` and benchmark runners | The copied source has no component-level license notice. Confirm that the repository owner has authority to distribute it under the intended license before public release. |
 | FPGA ZIP/CDF/POF material | Generated hardware images may be subject to tool, IP-core, or project-specific terms. Confirm redistribution authorization before public release. |
 | SPEC CPU2017 | Not included. Reviewers must use a separately licensed installation. |

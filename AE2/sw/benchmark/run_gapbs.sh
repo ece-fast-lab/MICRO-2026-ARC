@@ -203,12 +203,11 @@ source "${SCRIPT_DIR}/manager_runtime.sh"
 source "${SCRIPT_DIR}/runner_controls.sh"
 
 acquire_exclusive_lock() {
-  local saved_umask
   command -v flock >/dev/null 2>&1 || { echo "ERROR: flock is required" >&2; exit 1; }
-  saved_umask="$(umask)"
-  umask 000
-  exec 9>"${ARC_LOCK_FILE}" || { echo "ERROR: cannot open lock ${ARC_LOCK_FILE}" >&2; exit 1; }
-  umask "${saved_umask}"
+  if [[ ! -e "${ARC_LOCK_FILE}" ]]; then
+    (umask 000; set -o noclobber; : > "${ARC_LOCK_FILE}") 2>/dev/null || true
+  fi
+  exec 9<"${ARC_LOCK_FILE}" || { echo "ERROR: cannot open lock ${ARC_LOCK_FILE}" >&2; exit 1; }
   flock -n 9 || { echo "ERROR: another ARC setup or benchmark command is active" >&2; exit 1; }
 }
 
