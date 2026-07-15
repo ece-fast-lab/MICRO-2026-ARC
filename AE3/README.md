@@ -368,10 +368,10 @@ bash program_script/program_spr1.sh chmu_ae_merge_SPL1.cdf
 `program_spr1.sh` derives the CDF path from the clone, but `QUARTUS_BIN` remains
 a configurable host installation path (defaulting to the shared lab install).
 
-The power-cycle helper contains no credentials. It requires `BMC_HOST`,
-`BMC_USER`, `IPMI_PASSWORD`, and the explicit confirmation
-`CONFIRM_POWER_CYCLE=SPR1`. Do not put passwords in command-line arguments or
-commit them to Git.
+After programming, power-cycle SPR1 with the command supplied separately by
+the authorized system operator. This artifact intentionally does not include
+a BMC power-cycle script or BMC credentials. Wait for SPR1 to finish booting,
+reconnect to it, and only then run `set_default/setup_default.sh all`.
 
 ## Differences from the old manual scripts
 
