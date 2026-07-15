@@ -12,6 +12,7 @@ in copied components.
 | FPGA ZIP/CDF/POF material | Generated hardware images may be subject to tool, IP-core, or project-specific terms. Confirm redistribution authorization before public release. |
 | SPEC CPU2017 | Not included. Reviewers must use a separately licensed installation. |
 | GAPBS and graph datasets | Not included. Reviewers must provide their installation and datasets under the applicable licenses. |
+| DAMON user-space tool (`damo`) | Not included. AE3 uses the existing SPR1 installation linked by [ASPLOS-2025-M5 `sw/damo`](https://github.com/ece-fast-lab/ASPLOS-2025-M5/tree/main/sw/damo); its upstream licensing applies. |
 
 Keep all original source headers and license texts when redistributing the
 artifact.

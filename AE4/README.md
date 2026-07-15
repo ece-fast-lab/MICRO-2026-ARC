@@ -1,10 +1,45 @@
-# MICRO 2026 ARC Artifact Evaluation: SPR1 setup and benchmarks
+# MICRO 2026 ARC Artifact Evaluation: Figure 11
 
-This directory is the portable SPR1 package for reproducing the CHMU
-migration environment and running the GAPBS/SPEC CPU2017 experiments. All
-artifact-local paths are derived from the Git clone. Only the separately
-installed benchmark suites, graph datasets, and FPGA programming tool use
+This directory is the portable SPR1 package for reproducing Figure 11: a
+four-bar comparison of CXL-only, static CHMU-Cache, static CHMU-CMS, and the
+adaptive Cache/CMS policy. The primary reviewer workloads are GAPBS `bc_tw`,
+`bfs_tw`, and `pr_tw`. All artifact-local paths are derived from the Git clone;
+only separately installed benchmarks, graph datasets, and the FPGA tool use
 host-specific absolute paths.
+
+The short step-by-step procedure is in
+[`FIGURE11_REPRODUCTION.md`](FIGURE11_REPRODUCTION.md). The optional 20-trial
+training and suite-isolated Leave-One-Benchmark-Out workflow is documented in
+[`sw/ml/README.md`](sw/ml/README.md).
+
+## Reviewer quick path
+
+After the SPL1 POF has been programmed and SPR1 has been power-cycled:
+
+```bash
+cd MICRO_2026_ARC/AE4
+bash set_default/setup_default.sh all
+
+# Select one primary workload.
+bash sw/fig11/run_fig11_th16.sh bc_tw
+# bash sw/fig11/run_fig11_th16.sh bfs_tw
+# bash sw/fig11/run_fig11_th16.sh pr_tw
+```
+
+Use `all yes` after the workload to accept all prompts, `--resume` to reuse
+valid completed invocations, or `--skip-benchmark` to validate and plot
+existing canonical logs only. The command runs five complete GAPBS invocations
+for each of four methods. From every invocation it selects Trial Time 6--10,
+giving 25 samples per method, and plots the geometric-mean normalized
+performance:
+
+```text
+CXL-only geometric-mean time / method geometric-mean time
+```
+
+Values above `1.0` are better. Results are stored below
+`results/figure11/th16/<workload>/` as raw-run manifests, selected-sample CSV,
+summary CSV, metadata, PNG, and PDF.
 
 ## What is included
 
@@ -18,6 +53,10 @@ host-specific absolute paths.
 | `sw/core_pqos` | Reproduces the SPR1 CPU offlining and LLC-way allocation | Benchmark run |
 | `sw/build_option_th{16,32,64,96}` | Reviewer entry points for the four runtime thresholds | Benchmark run |
 | `sw/benchmark` | Common GAPBS and SPEC runners | Benchmark run |
+| `sw/fig11` | Five-repeat runner, strict 25-sample collector, and Figure 11 plotter | Figure 11 |
+| `sw/fig11_spec` | Optional five-repeat SPEC four-bar runner and SPEC log collector | Optional extension |
+| `sw/ml/pretrained` | Rank-1 GAPBS and SPEC cfgs for thresholds 16/32/64/96 | Adaptive run |
+| `sw/ml` | Optional 20-trial optimizer and suite-isolated LOBO generator | Optional training |
 
 The four manager binaries have the same source and compile options. The
 directory name selects the reviewer-facing threshold, and each wrapper writes
@@ -146,7 +185,13 @@ Set `GAPBS_ROOT` and either the graph directory or the explicit
 `GAPBS_WEB_GRAPH`/`GAPBS_TWITTER_GRAPH` paths for GAPBS. Optional DAMON runs
 also require absolute `DAMO_BIN` and `DAMO_CONFIG` paths.
 
-## Run GAPBS
+## Low-level GAPBS entry points
+
+The commands in this section are diagnostic building blocks. Use
+`sw/fig11/run_fig11_th*.sh` for reported Figure 11 results because that path
+selects the correct pretrained cfg, checks that the manager actually loaded
+it, freezes a SHA-256-addressed cfg snapshot in the result directory, performs
+five repetitions, and applies the 25-sample metric.
 
 Each threshold directory contains the same five portable wrappers. Arguments
 are mandatory: benchmark is `bc`, `bfs`, `cc`, or `pr`; database is `web` or
@@ -164,10 +209,11 @@ CMS-CHMU-only migration, epoch LSB `1`:
 ./sw/build_option_th16/run_test_indv_gap_400001_400001 bc twitter
 ```
 
-Dynamic Cache/CMS switching:
+Dynamic Cache/CMS switching requires an explicit workload cfg. For example:
 
 ```bash
-./sw/build_option_th16/run_test_indv_gap_400000_400001 bc twitter
+CHMU_MODEL_PATH="$PWD/sw/ml/pretrained/th16/gap/bc_twitter.cfg" \
+  ./sw/build_option_th16/run_test_indv_gap_400000_400001 bc twitter
 ```
 
 Dynamic switching (`400000 != 400001`) is accepted only after both core and IMC
@@ -177,8 +223,9 @@ algorithm. `CHMU_ALLOW_PREDICTOR_FALLBACK=1` enables the old duplicate-policy
 fallback for debugging only; results from that override are not the reported
 dynamic configuration.
 
-The original convenience entry point is also retained; it runs Cache-only,
-CMS-only, and dynamic switching sequentially:
+The original convenience entry point is also retained for diagnosis; it runs
+Cache-only, CMS-only, and dynamic switching sequentially. Supply a matching
+absolute `CHMU_MODEL_PATH` before using its dynamic point:
 
 ```bash
 ./sw/build_option_th16/run_test_indv_gap bc twitter
@@ -208,13 +255,15 @@ is dropped before the files are archived into the run output. Manager,
 background-control, tracker-disable, and workload failures are recorded and
 propagated rather than reported as successful runs.
 
-## Run SPEC CPU2017
+## Optional SPEC CPU2017 entry point
 
-The dynamic Cache/CMS wrapper accepts the numeric benchmark name; it defaults
-to eight copies:
+SPEC is not part of the main Figure 11 reviewer path. Its dynamic Cache/CMS
+wrapper accepts the numeric benchmark name and defaults to eight copies. Set
+the supplied threshold/workload cfg explicitly:
 
 ```bash
-./sw/build_option_th16/run_test_indv_spec_400000_400001 502
+CHMU_MODEL_PATH="$PWD/sw/ml/pretrained/th16/spec/502.cfg" \
+  ./sw/build_option_th16/run_test_indv_spec_400000_400001 502
 ```
 
 Override the copy count only when the experiment requires it:
@@ -228,6 +277,66 @@ The common runners additionally support `baseline`, `anb`, and `damon` modes.
 They are exposed directly in `sw/benchmark/run_gapbs.sh` and
 `sw/benchmark/run_spec.sh`; run either without arguments to see its exact
 interface.
+
+## Optional training and pretrained cfgs
+
+Normal reviewers should use the supplied cfgs and skip training. The package
+contains all 40 rank-1 files:
+
+```text
+4 thresholds x (5 GAPBS + 5 SPEC) workloads
+```
+
+They were generated by suite-separated LOBO: a held-out SPEC configuration is
+derived only from the other SPEC workloads, and a held-out GAPBS configuration
+only from the other GAPBS workloads. The supplied files are based on the
+available accumulated lab histories, whose per-workload counts vary; they are
+not claimed to be exactly 20 trials each.
+
+For optional fresh studies, these entry points target 20 successful executions
+per workload and support thresholds 16, 32, 64, and 96:
+
+```bash
+bash sw/ml/run_training_gapbs.sh bc_tw --threshold 16
+bash sw/ml/run_training_spec.sh gcc --threshold 16
+```
+
+After all five workloads in one suite have exactly 20 successful histories,
+generate suite-isolated LOBO candidates with:
+
+```bash
+bash sw/ml/generate_lobo_configs.sh gap --threshold 16 --source training
+```
+
+The optional offline tools need NumPy, Matplotlib, scikit-learn, and joblib.
+The supplied runtime cfg path needs none of those ML packages; only Matplotlib
+is required to draw the Figure 11 output. Full provenance, workload mappings,
+and the explicit cfg-replacement command are in `sw/ml/README.md`.
+
+## Optional selectable SPEC comparison
+
+Figure 11 and the reviewer quick path remain GAPBS-only. For completeness, the
+same four policies can also be run for one restricted SPEC workload with the
+corresponding SPEC-only LOBO cfg:
+
+```bash
+bash sw/run_figure11_benchmark.sh spec gcc --threshold 16
+# Other choices: mcf, cactuB, cam4, roms
+```
+
+The same dispatcher accepts GAPBS, for example
+`bash sw/run_figure11_benchmark.sh gapbs bc_tw --threshold 16`. The optional
+SPEC path runs five complete invocations per method, selects the final anchored
+`total seconds elapsed` value from each invocation, computes a five-sample
+geometric mean, and plots `CXL-only time / method time`. This metric is kept
+separate from the reported GAPBS 25-value metric. Threshold-specific SPEC
+wrappers are under `sw/fig11_spec/run_fig11_spec_th{16,32,64,96}.sh`.
+
+Local-only is deliberately absent from the reviewer figure. A valid run needs
+a reboot-time memory-map/layout change that gives NUMA Node 0 enough capacity,
+followed by a reboot and setup; it is not merely a placement flag. The expert
+`--include-local` path is guarded by `CONFIRM_LOCAL_MEMMAP=YES` and is not part
+of the four-bar result.
 
 ## FPGA programming is separate
 

@@ -1,4 +1,5 @@
 set_default/generated/
+results/
 
 program_script/*.pof
 program_script/*.cdf.bak

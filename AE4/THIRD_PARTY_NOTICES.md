@@ -12,6 +12,8 @@ in copied components.
 | FPGA ZIP/CDF/POF material | Generated hardware images may be subject to tool, IP-core, or project-specific terms. Confirm redistribution authorization before public release. |
 | SPEC CPU2017 | Not included. Reviewers must use a separately licensed installation. |
 | GAPBS and graph datasets | Not included. Reviewers must provide their installation and datasets under the applicable licenses. |
+| NumPy, Matplotlib, scikit-learn, and joblib | Not included. These Python packages are used by optional offline analysis/training under their respective licenses. Only Matplotlib is needed for the normal Figure 11 plot. |
+| `sw/ml/reference_trials` | Derived numeric trial/configuration records from the authors' experiment history; no benchmark binaries or graph datasets are included. Confirm publication authorization for experimental data before public release. |
 
 Keep all original source headers and license texts when redistributing the
 artifact.

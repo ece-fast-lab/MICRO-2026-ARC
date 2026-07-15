@@ -1,4 +1,7 @@
 set_default/generated/
+results/
+__pycache__/
+*.py[cod]
 
 program_script/*.pof
 program_script/*.cdf.bak

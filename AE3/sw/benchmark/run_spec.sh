@@ -57,6 +57,7 @@ source "${PLATFORM_CONFIG_FILE}"
 #              BASELINE_START_MEMS controls initial cpuset.mems
 #              BASELINE_MEMS controls post-start cpuset.mems
 #              BASELINE_MEM_POLICY=interleave adds numactl --interleave
+#              BASELINE_MEM_POLICY=membind adds numactl --membind
 #   mig      : CHMU migration via migration_manager, demotion=1
 #   anb      : enable Auto NUMA Balancing, demotion=1
 #   damon    : start DAMON migrate_hot, demotion=1
@@ -177,8 +178,8 @@ BASELINE_START_MEMS="${BASELINE_START_MEMS:-$BASELINE_MEMS}"
 BASELINE_MEM_POLICY="${BASELINE_MEM_POLICY:-default}"
 BASELINE_EXPAND_DELAY_SEC="${BASELINE_EXPAND_DELAY_SEC:-2}"
 case "$BASELINE_MEM_POLICY" in
-  default|interleave) ;;
-  *) echo "ERROR: BASELINE_MEM_POLICY must be one of: default | interleave"; exit 1 ;;
+  default|interleave|membind) ;;
+  *) echo "ERROR: BASELINE_MEM_POLICY must be one of: default | interleave | membind"; exit 1 ;;
 esac
 
 if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
@@ -902,6 +903,16 @@ taskset -c "$WL_CPUS" bash -lc "
     echo '[baseline] launch with numactl --interleave=${BASELINE_MEMS}'
     exec \
       numactl --interleave='${BASELINE_MEMS}' \
+      '${SPEC_BIN}' \
+      --noreportable --size ref --tuning base --iteration 1 --action onlyrun \
+      --config '${SPEC_CONFIG}' --copies='${copies}' '${spec}'
+  fi
+
+  if [[ '${mode}' == 'baseline' && '${BASELINE_MEM_POLICY}' == 'membind' ]]; then
+    command -v numactl >/dev/null 2>&1 || { echo 'ERROR: numactl not found for BASELINE_MEM_POLICY=membind'; exit 97; }
+    echo '[baseline] launch with numactl --membind=${BASELINE_MEMS}'
+    exec \
+      numactl --membind='${BASELINE_MEMS}' \
       '${SPEC_BIN}' \
       --noreportable --size ref --tuning base --iteration 1 --action onlyrun \
       --config '${SPEC_CONFIG}' --copies='${copies}' '${spec}'

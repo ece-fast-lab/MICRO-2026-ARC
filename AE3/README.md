@@ -18,6 +18,9 @@ host-specific absolute paths.
 | `sw/core_pqos` | Reproduces the SPR1 CPU offlining and LLC-way allocation | Benchmark run |
 | `sw/build_option_th{16,32,64,96}` | Reviewer entry points for the four runtime thresholds | Benchmark run |
 | `sw/benchmark` | Common GAPBS and SPEC runners | Benchmark run |
+| `sw/fig3` | Figure 3 orchestration, strict GAPBS/SPEC parsers, and normalized-performance plotter | Main evaluation |
+| `sw/fig6` | Optional Cache/CMS epoch-sensitivity wrappers | Optional evaluation |
+| `sw/optional` | Optional SPL1/SPL2/SPL4 sampling-ratio wrappers | Optional evaluation |
 
 The four manager binaries have the same source and compile options. The
 directory name selects the reviewer-facing threshold, and each wrapper writes
@@ -47,6 +50,7 @@ frequency controls. The reviewer account needs passwordless or initially
 interactive `sudo` access for modules, MSRs, sysfs, cgroups, PCI configuration,
 and MMIO; benchmark runners refresh the authenticated timestamp without
 prompting during long runs.
+Figure plotting additionally requires Python 3 and matplotlib.
 Setup changes host-wide CPU, NUMA, swap, PCI, and MMIO state, so use SPR1
 exclusively. State-changing setup actions and benchmark entry points share an
 exclusive lock and refuse to overlap with another ARC run; read-only
@@ -143,8 +147,127 @@ sw/config/benchmark_paths.env
 
 Set `SPEC_ROOT`, `SPEC_RUNCPU`, and the absolute `SPEC_CONFIG` path for SPEC.
 Set `GAPBS_ROOT` and either the graph directory or the explicit
-`GAPBS_WEB_GRAPH`/`GAPBS_TWITTER_GRAPH` paths for GAPBS. Optional DAMON runs
-also require absolute `DAMO_BIN` and `DAMO_CONFIG` paths.
+`GAPBS_WEB_GRAPH`/`GAPBS_TWITTER_GRAPH` paths for GAPBS.
+
+ANB (Auto NUMA Balancing) is provided by the SPR1 Linux kernel. It requires no
+separate user-space package; the benchmark runner selects it through the
+kernel NUMA-balancing control.
+
+DAMON uses the `damo` installation and migration-policy JSON that are already
+configured on SPR1. AE3 does not copy, install, or generate DAMO settings.
+The software relationship and the `damo` submodule are documented in the
+[ASPLOS-2025-M5 software README](https://github.com/ece-fast-lab/ASPLOS-2025-M5/blob/main/sw/README.md)
+and [ASPLOS-2025-M5 `sw/damo`](https://github.com/ece-fast-lab/ASPLOS-2025-M5/tree/main/sw/damo).
+If the existing SPR1 paths are not exported in the shell, set `DAMO_BIN` and
+`DAMO_CONFIG` in `sw/config/benchmark_paths.env`; `DAMO_BIN` is detected
+automatically when `damo` is on `PATH`.
+
+## Main evaluation: reproduce Figure 3 with `pr_tw`
+
+Figure 3 uses the SPL1 FPGA image (sampling every access). The scripts cannot
+read back the compile-time sampling ratio, so the reviewer must confirm the
+loaded image. After programming SPL1, power-cycling SPR1, cloning the artifact,
+and completing setup, run from `AE3`:
+
+```bash
+bash set_default/setup_default.sh all
+bash sw/fig3/run_fig3_gapbs.sh pr_tw
+```
+
+The second command asks before each long step. To accept every confirmation,
+or to continue an interrupted sweep while retaining complete points, use:
+
+```bash
+bash sw/fig3/run_fig3_gapbs.sh pr_tw all yes
+bash sw/fig3/run_fig3_gapbs.sh pr_tw --resume
+```
+
+It runs eleven points: Baseline, ANB, DAMON, four Cache thresholds, and four
+CMS thresholds. Cache uses epoch `400000/400000`; CMS uses
+`400001/400001`, whose set low bit selects the CMS implementation. The four
+thresholds are `16`, `32`, `64`, and `96`. Baseline is fixed to the CXL node
+with `numactl --membind`, matching the original Figure 3 run rather than the
+common runner's more permissive two-node baseline default.
+
+For GAPBS, the collector requires exactly ten anchored `Trial Time:` records
+and computes the geometric mean of records 6--10. It deliberately ignores
+GAPBS's all-ten arithmetic `Average Time`. The plot reports normalized
+performance as `baseline_seconds / method_seconds`, so higher is better.
+Outputs are written below:
+
+```text
+results/figure3/gapbs/pr_twitter/
+  run_metadata.txt
+  figure3_manifest.csv
+  figure3_results.csv
+  figure3_normalized_performance.png
+  figure3_normalized_performance.pdf
+  runs/
+```
+
+To regenerate only the CSV and plots from existing canonical logs:
+
+```bash
+bash sw/fig3/run_fig3_gapbs.sh pr_tw --skip-benchmark
+```
+
+Reuse/processing modes also require `runtime_summary.txt` to report successful
+workload, manager, background-control, and tracker cleanup status.
+
+See `FIGURE3_REPRODUCTION.md` for the exact method table, all benchmark
+selectors, output validation rules, and optional experiments.
+
+## Optional Figure 3 workloads
+
+Other GAPBS combinations use either the short selector or two arguments:
+
+```bash
+bash sw/fig3/run_fig3_gapbs.sh bfs_tw
+bash sw/fig3/run_fig3_gapbs.sh cc web
+```
+
+SPEC CPU2017 support is included but is optional for the reviewer. For gcc:
+
+```bash
+bash sw/fig3/run_fig3_spec.sh 502
+```
+
+The validated SPEC IDs are `502`, `505`, `507`, `527`, and `554`. The SPEC
+collector requires a standalone `Run Complete` marker and exactly one
+`; N total seconds elapsed` record; `--copies=8` is one eight-copy SPECrate
+invocation, not eight repeated trials.
+
+## Optional Figure 6 epoch sweep
+
+Figure 6 uses SPL1, threshold 64, and Cache/CMS only. It does not run Baseline,
+ANB, or DAMON. The complete GAPBS or SPEC sweeps are:
+
+```bash
+bash sw/fig6/run_fig6_epoch_gapbs.sh pr twitter
+bash sw/fig6/run_fig6_epoch_spec.sh 502
+```
+
+Use `--method cache|cms|both`, `--epoch 1|10|100|1000|all`, `--resume`, or
+`--yes` to narrow or automate the optional run. Cache epochs are
+`400000`, `4000000`, `40000000`, and `400000000`; CMS uses the corresponding
+odd values ending in `1`. Manager polling remains 1 ms for every epoch.
+
+## Optional sampling-ratio runs
+
+Sampling ratio is an FPGA compile-time setting. The following wrappers never
+program a POF or reboot the server; they require the reviewer to declare and
+confirm the already loaded SPL1/SPL2/SPL4 image and record that declaration in
+the result manifest:
+
+```bash
+bash sw/optional/run_sampling_gapbs.sh pr twitter --sampling spl2
+bash sw/optional/run_sampling_spec.sh 502 --sampling spl2 --threshold 32
+```
+
+The legacy GAPBS threshold mapping is SPL1=`64`, SPL2=`32`, and SPL4=`16`, so
+the GAPBS wrapper supplies those defaults. SPEC requires `--threshold`
+explicitly because the legacy SPEC SPL4 wrappers are inconsistent. See
+`FIGURE3_REPRODUCTION.md` before using these optional commands.
 
 ## Run GAPBS
 
