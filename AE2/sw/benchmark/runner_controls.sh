@@ -1,5 +1,29 @@
 #!/usr/bin/env bash
 
+runner_normalize_kernel_bool() {
+  case "${1,,}" in
+    1|y|yes|true|on)  printf '1\n' ;;
+    0|n|no|false|off) printf '0\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+runner_values_equal() {
+  local file="$1"
+  local expected="$2"
+  local actual="$3"
+  local expected_normalized
+  local actual_normalized
+
+  if [[ "$file" == */numa/demotion_enabled ]]; then
+    expected_normalized="$(runner_normalize_kernel_bool "$expected")" || return 1
+    actual_normalized="$(runner_normalize_kernel_bool "$actual")" || return 1
+    [[ "$actual_normalized" == "$expected_normalized" ]]
+  else
+    [[ "$actual" == "$expected" ]]
+  fi
+}
+
 runner_write_exact() {
   local file="$1"
   local value="$2"
@@ -11,7 +35,7 @@ runner_write_exact() {
   }
   printf '%s\n' "$value" | manager_run_root tee "$file" >/dev/null
   actual="$(< "$file")"
-  [[ "$actual" == "$value" ]] || {
+  runner_values_equal "$file" "$value" "$actual" || {
     echo "ERROR: $file readback '$actual' does not match '$value'" >&2
     return 1
   }

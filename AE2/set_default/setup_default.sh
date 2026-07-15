@@ -53,6 +53,14 @@ die() {
     exit 1
 }
 
+normalize_kernel_bool() {
+    case "${1,,}" in
+        1|y|yes|true|on)  printf '1\n' ;;
+        0|n|no|false|off) printf '0\n' ;;
+        *) return 1 ;;
+    esac
+}
+
 require_target_host() {
     local actual_hostname
     actual_hostname="$(hostname -s)"
@@ -955,6 +963,8 @@ apply_defaults() {
     local ORIGINAL_NUMA_BALANCING
     local ORIGINAL_NUMA_DEMOTION
     local APPLY_MODULES_LOADED=0
+    local demotion_readback
+    local demotion_normalized
 
     if [[ "${PREFLIGHT_COMPLETE}" != 1 ]]; then
         check_requirements
@@ -1015,8 +1025,12 @@ apply_defaults() {
     bash "${SW_DIR}/set_para/initialize_hardware.sh"
     [[ "$(< /proc/sys/kernel/numa_balancing)" == "${NUMA_BALANCING_MODE}" ]] || \
         die "NUMA balancing mode did not latch"
-    [[ "$(< /sys/kernel/mm/numa/demotion_enabled)" == "${NUMA_DEMOTION_ENABLED}" ]] || \
-        die "NUMA demotion setting did not latch"
+    demotion_readback="$(< /sys/kernel/mm/numa/demotion_enabled)"
+    if ! demotion_normalized="$(normalize_kernel_bool "${demotion_readback}")"; then
+        die "invalid NUMA demotion readback: ${demotion_readback}"
+    fi
+    [[ "${demotion_normalized}" == "${NUMA_DEMOTION_ENABLED}" ]] || \
+        die "NUMA demotion setting did not latch (requested ${NUMA_DEMOTION_ENABLED}, read back ${demotion_readback})"
     module_is_loaded page_migrate || die "page_migrate is not loaded after apply"
     module_is_loaded pac_ofw_buf || die "pac_ofw_buf is not loaded after apply"
     trap - EXIT
