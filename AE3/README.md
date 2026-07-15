@@ -56,6 +56,9 @@ interactive `sudo` access for modules, MSRs, sysfs, cgroups, PCI configuration,
 and MMIO; benchmark runners refresh the authenticated timestamp without
 prompting during long runs.
 Figure plotting additionally requires Python 3 and matplotlib.
+If an earlier benchmark left the intended isolation mask (`0-7,20` online),
+setup reports the inactive CPUs' frequency controls as `SKIP`; it still
+strictly validates and sets the active workload/manager CPUs to 2.0 GHz.
 Setup changes host-wide CPU, NUMA, swap, PCI, and MMIO state, so use SPR1
 exclusively. State-changing setup actions and benchmark entry points share an
 exclusive lock and refuse to overlap with another ARC run; read-only

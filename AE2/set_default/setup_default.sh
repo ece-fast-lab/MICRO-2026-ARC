@@ -99,6 +99,17 @@ write_root_value() {
     fi
 }
 
+cpu_frequency_control_is_active() {
+    local governor_file="$1"
+    local cpu_dir
+    local online_file
+
+    cpu_dir="${governor_file%/cpufreq/scaling_governor}"
+    online_file="${cpu_dir}/online"
+    # CPU0 normally has no online control file and is always online.
+    [[ ! -e "${online_file}" || "$(< "${online_file}")" == 1 ]]
+}
+
 require_platform_config() {
     [[ -r "${PLATFORM_CONFIG_FILE}" ]] || \
         die "platform configuration is missing; run '$0 detect' first"
@@ -204,6 +215,8 @@ check_requirements() {
     local controllers
     local governor_file
     local available_governors
+    local cpu_dir
+    local offline_governor_cpus=""
     local -a required_cmdline=(
         'intel_iommu=on,sm_on'
         'iommu=pt'
@@ -331,6 +344,11 @@ check_requirements() {
         printf '  OK       CPU frequency controls\n'
         for governor_file in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor; do
             [[ -e "${governor_file}" ]] || continue
+            if ! cpu_frequency_control_is_active "${governor_file}"; then
+                cpu_dir="${governor_file%/cpufreq/scaling_governor}"
+                offline_governor_cpus+="${offline_governor_cpus:+ }${cpu_dir##*/}"
+                continue
+            fi
             if [[ ! -r "${governor_file%/*}/scaling_available_governors" ||
                   ! -e "${governor_file%/*}/scaling_setspeed" ]]; then
                 warn "incomplete CPU frequency controls below ${governor_file%/*}"
@@ -343,6 +361,9 @@ check_requirements() {
                 missing=1
             fi
         done
+        if [[ -n "${offline_governor_cpus}" ]]; then
+            printf '  SKIP     inactive CPU frequency controls: %s\n' "${offline_governor_cpus}"
+        fi
     fi
 
     if [[ ! -d /sys/devices/system/cpu/cpu31 ]]; then
@@ -715,6 +736,7 @@ set_cpu_frequency() {
 
     for governor_file in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor; do
         [[ -e "${governor_file}" ]] || continue
+        cpu_frequency_control_is_active "${governor_file}" || continue
         found=1
         write_root_value "${governor_file}" userspace
         setspeed_file="${governor_file%/*}/scaling_setspeed"
@@ -753,6 +775,7 @@ validate_apply_controls() {
 
     for governor_file in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor; do
         [[ -e "${governor_file}" ]] || continue
+        cpu_frequency_control_is_active "${governor_file}" || continue
         [[ -r "${governor_file%/*}/scaling_available_governors" ]] || \
             die "available governors file is missing below ${governor_file%/*}"
         [[ -e "${governor_file%/*}/scaling_setspeed" ]] || \
