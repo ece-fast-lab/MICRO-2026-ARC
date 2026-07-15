@@ -321,10 +321,11 @@ for the manager, and every other CPU in 8-31 offline, with fixed LLC-way
 allocation. `SKIP_CPU_ISOLATION=1` bypasses that step for debugging only and
 does not reproduce the reported configuration.
 
-Only `migration_manager` is started through `sudo`, because it opens BAR2 and
-writes the root-only migration proc nodes. GAPBS/SPEC workloads remain under
-the reviewer account. The root-only proc permissions are an artifact safety
-hardening and do not change the migration request format.
+`migration_manager` is the only long-running process started through `sudo`,
+because it opens BAR2 and writes the root-only migration proc nodes. Before a
+GAPBS/SPEC workload starts, it stops at a short gate while the runner uses root
+only to attach that PID to `/sys/fs/cgroup/app`; the runner verifies membership
+and resumes it. The workload UID remains the reviewer account throughout.
 
 The runner waits for a root-created readiness record, verifies the actual
 manager PID and executable, resets/arms CHMU, and then releases the manager's

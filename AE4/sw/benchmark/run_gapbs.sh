@@ -901,11 +901,9 @@ fi
 
 $SUDO mkdir -p "$CGROUP_PATH"
 runner_assert_cgroup_empty
-RUN_USER="${SUDO_USER:-${USER:-$(id -un)}}"
-RUN_GROUP="$(id -gn "${RUN_USER}")"
-$SUDO chown "${RUN_USER}:${RUN_GROUP}" "$CGROUP_PATH" "${CGROUP_PATH}/cgroup.procs"
-$SUDO chmod u+rwx,g+rwx "$CGROUP_PATH"
-$SUDO chmod u+rw,g+rw "${CGROUP_PATH}/cgroup.procs"
+$SUDO chown root:root "$CGROUP_PATH" "${CGROUP_PATH}/cgroup.procs"
+$SUDO chmod 0755 "$CGROUP_PATH"
+$SUDO chmod 0644 "${CGROUP_PATH}/cgroup.procs"
 
 cg_write "$WL_CPUS" "${CGROUP_PATH}/cpuset.cpus"
 if [[ "$mode" == "baseline" ]]; then
@@ -977,12 +975,11 @@ rotate_if_exists "$WORKLOAD_LOG"
 (
   set -euo pipefail
   local_pid="${BASHPID:-$$}"
+  kill -STOP "$local_pid"
 
   if command -v taskset >/dev/null 2>&1; then
     taskset -pc "$WL_CPUS" "$local_pid" >/dev/null 2>&1 || true
   fi
-
-  echo "$local_pid" > "${CGROUP_PATH}/cgroup.procs"
 
   if ! grep -Fxq "0::/${CGROUP_NAME}" "/proc/${local_pid}/cgroup"; then
     echo "[ERR] join failed"
@@ -1012,6 +1009,7 @@ rotate_if_exists "$WORKLOAD_LOG"
 ) > "$WORKLOAD_LOG" 2>&1 &
 
 WORKLOAD_PID=$!
+runner_attach_stopped_pid_to_cgroup "$WORKLOAD_PID" || exit 1
 WORKLOAD_START_TS="$(date +%s)"
 echo "Workload PID: $WORKLOAD_PID"
 echo "Workload log: $WORKLOAD_LOG"
