@@ -119,6 +119,32 @@ class SpecFigure11ShellIntegrationTest(unittest.TestCase):
             self.assertIn(f"adaptive_cfg_snapshot={frozen_cfg}\n", metadata)
             self.assertIn(f"adaptive_cfg_sha256={model_sha256}\n", metadata)
             self.assertIn("selected_samples_per_method=5\n", metadata)
+            self.assertIn("plot_status=generated\n", metadata)
+
+            png = result_dir / "figure11_spec_normalized_performance.png"
+            pdf = result_dir / "figure11_spec_normalized_performance.pdf"
+            png.unlink()
+            pdf.unlink()
+            skip_plot_result = subprocess.run(
+                command + ["--skip-plot"],
+                cwd=ARTIFACT_DIR,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                skip_plot_result.returncode,
+                0,
+                msg=(
+                    f"stdout:\n{skip_plot_result.stdout}\n"
+                    f"stderr:\n{skip_plot_result.stderr}"
+                ),
+            )
+            self.assertFalse(png.exists())
+            self.assertFalse(pdf.exists())
+            metadata = (result_dir / "run_metadata.txt").read_text(encoding="utf-8")
+            self.assertIn("plot_status=skipped_by_request\n", metadata)
 
             different_copies_env = env.copy()
             different_copies_env["CHMU_SPEC_COPIES"] = "4"

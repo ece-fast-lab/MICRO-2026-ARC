@@ -14,24 +14,96 @@ training and suite-isolated Leave-One-Benchmark-Out workflow is documented in
 
 ## Reviewer quick path
 
-After the SPL1 POF has been programmed and SPR1 has been power-cycled:
+After the SPL1 POF has been programmed and SPR1 has been power-cycled, run the
+hardware setup and long data collection from the normal reviewer account. Do
+not use `sudo -i` or put `sudo` in front of an entire benchmark command.
+
+### 1. Set up SPR1
 
 ```bash
 cd MICRO_2026_ARC/AE4
 bash set_default/setup_default.sh all
-
-# Select one primary workload.
-bash sw/fig11/run_fig11_th16.sh bc_tw
-# bash sw/fig11/run_fig11_th16.sh bfs_tw
-# bash sw/fig11/run_fig11_th16.sh pr_tw
 ```
 
-Use `all yes` after the workload to accept all prompts, `--resume` to reuse
-valid completed invocations, or `--skip-benchmark` to validate and plot
-existing canonical logs only. The command runs five complete GAPBS invocations
-for each of four methods. From every invocation it selects Trial Time 6--10,
-giving 25 samples per method, and plots the geometric-mean normalized
-performance:
+### 2. Collect benchmark data without plotting
+
+For one primary workload, the following convenience wrapper accepts all
+prompts, runs all four methods at threshold 16, validates/collects their data,
+and skips PNG/PDF generation:
+
+```bash
+bash sw/fig11/run_fig11_all_yes.sh bc_tw --threshold 16
+# Other primary choices: bfs_tw, pr_tw
+```
+
+To collect all three primary workloads sequentially with automatic yes and
+plotting disabled:
+
+```bash
+bash sw/fig11/run_all_primary_th16.sh
+```
+
+The four methods can instead be run separately. This is useful for a staged
+review or for rerunning only one failed case:
+
+```bash
+bash sw/fig11/run_fig11_case.sh bc_tw cxl      --threshold 16
+bash sw/fig11/run_fig11_case.sh bc_tw cache    --threshold 16
+bash sw/fig11/run_fig11_case.sh bc_tw cms      --threshold 16
+bash sw/fig11/run_fig11_case.sh bc_tw adaptive --threshold 16
+```
+
+`run_fig11_case.sh <workload> <method> [--threshold N] [options]` accepts
+`cxl`, `cache`, `cms`, or `adaptive`. The main runner additionally accepts
+`all` through either `--method` or `--case`; the automatic all-method wrapper
+is `run_fig11_all_yes.sh`. The case wrapper always skips the plot step.
+
+`all yes` unconditionally accepts rerunning selected canonical cases. Existing
+output is moved to the next numbered `.bak` path before replacement. To
+continue after an interruption while preserving valid completed invocations,
+use `--resume` instead:
+
+```bash
+bash sw/fig11/run_fig11_th16.sh bc_tw --case all --resume --skip-plot
+bash sw/fig11/run_all_primary_th16.sh --resume
+```
+
+### 3. Plot later without running hardware
+
+On SPR1, select the compatible Ubuntu NumPy/Matplotlib packages explicitly so
+a package installed below `/usr/local` or the user site cannot take precedence:
+
+```bash
+env PYTHONNOUSERSITE=1 \
+  PYTHONPATH=/usr/lib/python3/dist-packages \
+  python3 -c 'import numpy, matplotlib; print(numpy.__version__, matplotlib.__version__)'
+
+env PYTHONNOUSERSITE=1 \
+  PYTHONPATH=/usr/lib/python3/dist-packages \
+  bash sw/fig11/plot_fig11.sh bc_tw --threshold 16
+```
+
+`plot_fig11.sh <workload> [--threshold N] [options]` is processing-only. It
+validates the existing canonical logs, computes the selected-sample and
+summary CSVs, and creates PNG/PDF without changing hardware or rerunning a
+benchmark.
+
+If the system-package import fails, use a plotting-only virtual environment:
+
+```bash
+sudo apt install -y python3-venv
+python3 -m venv "$HOME/.venvs/micro-2026-arc-plot"
+source "$HOME/.venvs/micro-2026-arc-plot/bin/activate"
+python3 -m pip install --upgrade pip
+python3 -m pip install -r sw/fig11/requirements.txt
+python3 -c 'import numpy, matplotlib; print(numpy.__version__, matplotlib.__version__)'
+bash sw/fig11/plot_fig11.sh bc_tw --threshold 16
+deactivate
+```
+
+Each complete workload contains five GAPBS invocations per method. From every
+invocation the collector selects Trial Time 6--10, giving 25 samples per
+method, and plots the geometric-mean normalized performance:
 
 ```text
 CXL-only geometric-mean time / method geometric-mean time
@@ -91,6 +163,10 @@ module build. The reviewer account needs passwordless or initially
 interactive `sudo` access for modules, MSRs, sysfs, cgroups, PCI configuration,
 and MMIO; benchmark runners refresh the authenticated timestamp without
 prompting during long runs.
+Run the setup and workloads from the reviewer account rather than a `sudo -i`
+shell. The scripts invoke sudo only for the controls that need it, and keep the
+benchmark workload under the reviewer UID. Python 3 is required for result
+collection; NumPy and Matplotlib are needed only when the plot is generated.
 If an earlier benchmark left the intended isolation mask (`0-7,20` online),
 setup reports the inactive CPUs' frequency controls as `SKIP`; it still
 strictly validates and sets the active workload/manager CPUs to 2.0 GHz.
@@ -329,7 +405,7 @@ same four policies can also be run for one restricted SPEC workload with the
 corresponding SPEC-only LOBO cfg:
 
 ```bash
-bash sw/run_figure11_benchmark.sh spec gcc --threshold 16
+bash sw/run_figure11_benchmark.sh spec gcc --threshold 16 --skip-plot
 # Other choices: mcf, cactuB, cam4, roms
 ```
 
@@ -340,6 +416,16 @@ SPEC path runs five complete invocations per method, selects the final anchored
 geometric mean, and plots `CXL-only time / method time`. This metric is kept
 separate from the reported GAPBS 25-value metric. Threshold-specific SPEC
 wrappers are under `sw/fig11_spec/run_fig11_spec_th{16,32,64,96}.sh`.
+
+After the optional SPEC data completes, regenerate its CSV and plot without
+running hardware by using the same plotting environment described above:
+
+```bash
+env PYTHONNOUSERSITE=1 \
+  PYTHONPATH=/usr/lib/python3/dist-packages \
+  bash sw/run_figure11_benchmark.sh spec gcc \
+    --threshold 16 --skip-benchmark --yes
+```
 
 Local-only is deliberately absent from the reviewer figure. A valid run needs
 a reboot-time memory-map/layout change that gives NUMA Node 0 enough capacity,

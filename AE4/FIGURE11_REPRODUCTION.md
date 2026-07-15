@@ -6,6 +6,10 @@ the long trial-generation and Random Forest steps are intentionally skipped.
 
 ## 1. Set up SPR1 after reboot
 
+Use the normal reviewer account. Do not enter `sudo -i` or run an entire setup
+or benchmark command through `sudo`; the scripts elevate only the privileged
+host controls and migration-manager operations.
+
 ```bash
 cd MICRO_2026_ARC/AE4
 bash set_default/setup_default.sh all
@@ -22,35 +26,51 @@ Confirm the absolute GAPBS and graph paths in:
 sw/config/benchmark_paths.env
 ```
 
-Figure 11 needs Python 3 and Matplotlib for result processing. The supplied
-runtime `.cfg` files do not require scikit-learn.
+Python 3 is needed for result collection. NumPy and Matplotlib are needed only
+for the later PNG/PDF step, and the supplied runtime `.cfg` files do not
+require scikit-learn.
 
-## 2. Run one Figure 11 workload
+## 2. Collect Figure 11 data without plotting
 
-The primary reviewer workloads are `bc_tw`, `bfs_tw`, and `pr_tw`. Select one:
-
-```bash
-bash sw/fig11/run_fig11_th16.sh bc_tw
-bash sw/fig11/run_fig11_th16.sh bfs_tw
-bash sw/fig11/run_fig11_th16.sh pr_tw
-```
-
-The script asks for confirmation before the experiment and before each
-benchmark invocation. To accept every prompt:
+The primary reviewer workloads are `bc_tw`, `bfs_tw`, and `pr_tw`. For one
+workload, the recommended automatic command runs all four methods, accepts all
+benchmark confirmations, collects the CSV data, and skips plotting:
 
 ```bash
-bash sw/fig11/run_fig11_th16.sh bc_tw all yes
+bash sw/fig11/run_fig11_all_yes.sh bc_tw --threshold 16
+# Other choices: bfs_tw, pr_tw
 ```
 
-To reproduce all three primary workload panels sequentially:
+To collect all three primary workload panels sequentially at threshold 16:
 
 ```bash
-for b in bc_tw bfs_tw pr_tw; do
-  bash sw/fig11/run_fig11_th16.sh "$b" all yes
-done
+bash sw/fig11/run_all_primary_th16.sh
 ```
 
-Each command runs five independent invocations of each method:
+`run_all_primary_th16.sh` is also automatic-yes/data-only. If it is interrupted,
+reuse all valid completed invocations and run only missing ones with:
+
+```bash
+bash sw/fig11/run_all_primary_th16.sh --resume
+```
+
+Each method can instead be run as a separate case:
+
+```bash
+bash sw/fig11/run_fig11_case.sh bc_tw cxl      --threshold 16
+bash sw/fig11/run_fig11_case.sh bc_tw cache    --threshold 16
+bash sw/fig11/run_fig11_case.sh bc_tw cms      --threshold 16
+bash sw/fig11/run_fig11_case.sh bc_tw adaptive --threshold 16
+```
+
+The wrapper interface is
+`run_fig11_case.sh <workload> <method> [--threshold N] [options]`. Valid method
+names for this individual-case wrapper are `cxl`, `cache`, `cms`, and
+`adaptive`. The underlying runner additionally accepts `all` through either
+`--method` or `--case`; use `run_fig11_all_yes.sh` for the automatic all-method
+path. The case wrapper always skips plotting.
+
+Each complete method consists of five independent invocations:
 
 | Bar | Placement/policy | Epoch pair |
 |---|---|---|
@@ -63,8 +83,9 @@ Adaptive does not switch unconditionally on every interval. It begins with the
 Cache epoch and uses the online predictor plus the supplied scale/hysteresis
 configuration to decide whether to switch. The runner rejects a run unless the
 manager log proves that the exact cfg was loaded and the ML policy was active.
-At command start, it copies the selected cfg to a content-addressed, read-only
-snapshot under the result directory. Consequently, replacing a pretrained cfg
+At command start, the runner copies the selected cfg to a content-addressed,
+read-only snapshot under the result directory. Consequently, replacing a
+pretrained cfg
 cannot make `--resume` or `--skip-benchmark` mix adaptive runs from two cfg
 versions; old adaptive repetitions fail validation and must be rerun.
 
@@ -79,21 +100,64 @@ CXL-only geometric-mean time / method geometric-mean time
 
 Therefore, `1.0` is CXL-only and values above `1.0` are better.
 
-## 3. Resume or process existing output
+### Rerun versus resume
 
-If an interrupted command already has valid runs, continue without repeating
-them:
+`all yes` means unconditionally accept rerunning every selected case. If a
+canonical run directory already exists, the common runner moves it to the next
+numbered `.bak` path before replacement. Use `--resume`, not `all yes`, when an
+interrupted command already has valid runs:
 
 ```bash
-bash sw/fig11/run_fig11_th16.sh bc_tw --resume
+bash sw/fig11/run_fig11_th16.sh bc_tw --case all --resume --skip-plot
 ```
 
-If a canonical run directory exists and must be rerun, the script asks first;
-the common runner moves the old directory to `.bakN`. To validate and plot
-already completed canonical logs without touching hardware:
+The equivalent explicit automatic fresh/rerun command is:
 
 ```bash
-bash sw/fig11/run_fig11_th16.sh bc_tw --skip-benchmark
+bash sw/fig11/run_fig11_th16.sh bc_tw --case all all yes --skip-plot
+```
+
+## 3. Plot completed data later
+
+First verify that SPR1 uses the compatible Ubuntu system packages rather than
+a conflicting NumPy/Matplotlib below `/usr/local` or the user site. Then call
+the processing-only plot wrapper:
+
+```bash
+env PYTHONNOUSERSITE=1 \
+  PYTHONPATH=/usr/lib/python3/dist-packages \
+  python3 -c 'import numpy, matplotlib; print(numpy.__version__, matplotlib.__version__)'
+
+env PYTHONNOUSERSITE=1 \
+  PYTHONPATH=/usr/lib/python3/dist-packages \
+  bash sw/fig11/plot_fig11.sh bc_tw --threshold 16
+```
+
+`plot_fig11.sh <workload> [--threshold N] [options]` validates and parses the
+existing canonical logs with `--skip-benchmark`; it never starts hardware or
+moves/reruns benchmark output. To plot all three primary workloads after
+`run_all_primary_th16.sh`:
+
+```bash
+for b in bc_tw bfs_tw pr_tw; do
+  env PYTHONNOUSERSITE=1 \
+    PYTHONPATH=/usr/lib/python3/dist-packages \
+    bash sw/fig11/plot_fig11.sh "$b" --threshold 16
+done
+```
+
+If the system-package import fails, use a virtual environment only during the
+plot step:
+
+```bash
+sudo apt install -y python3-venv
+python3 -m venv "$HOME/.venvs/micro-2026-arc-plot"
+source "$HOME/.venvs/micro-2026-arc-plot/bin/activate"
+python3 -m pip install --upgrade pip
+python3 -m pip install -r sw/fig11/requirements.txt
+python3 -c 'import numpy, matplotlib; print(numpy.__version__, matplotlib.__version__)'
+bash sw/fig11/plot_fig11.sh bc_tw --threshold 16
+deactivate
 ```
 
 Outputs are written below:
@@ -111,16 +175,16 @@ SHA-256, and PNG/PDF plots.
 `cc_tw` and `pr_web` are optional:
 
 ```bash
-bash sw/fig11/run_fig11_th16.sh cc_tw
-bash sw/fig11/run_fig11_th16.sh pr_web
+bash sw/fig11/run_fig11_th16.sh cc_tw --skip-plot
+bash sw/fig11/run_fig11_th16.sh pr_web --skip-plot
 ```
 
 Threshold-specific wrappers are provided for 16, 32, 64, and 96:
 
 ```bash
-bash sw/fig11/run_fig11_th32.sh bc_tw
-bash sw/fig11/run_fig11_th64.sh bc_tw
-bash sw/fig11/run_fig11_th96.sh bc_tw
+bash sw/fig11/run_fig11_th32.sh bc_tw --skip-plot
+bash sw/fig11/run_fig11_th64.sh bc_tw --skip-plot
+bash sw/fig11/run_fig11_th96.sh bc_tw --skip-plot
 ```
 
 ## Optional SPEC extension (not the reviewer Figure 11 path)
@@ -129,7 +193,7 @@ The package also accepts one of `gcc`, `mcf`, `cactuB`, `cam4`, or `roms` and
 uses its suite-isolated SPEC cfg:
 
 ```bash
-bash sw/run_figure11_benchmark.sh spec gcc --threshold 16
+bash sw/run_figure11_benchmark.sh spec gcc --threshold 16 --skip-plot
 ```
 
 This optional path performs five complete SPEC invocations per method and uses
@@ -137,6 +201,15 @@ the final anchored `total seconds elapsed` value from each, so its bar is a
 five-sample geometric mean. It intentionally does not apply GAPBS's 25-value
 Trial Time rule. Its outputs are under
 `results/figure11_optional_spec/th16/<SPEC-ID>/`.
+
+Plot that optional result later with:
+
+```bash
+env PYTHONNOUSERSITE=1 \
+  PYTHONPATH=/usr/lib/python3/dist-packages \
+  bash sw/run_figure11_benchmark.sh spec gcc \
+    --threshold 16 --skip-benchmark --yes
+```
 
 ## Why Local-only is omitted
 

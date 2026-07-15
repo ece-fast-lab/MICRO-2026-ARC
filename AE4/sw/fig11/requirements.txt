@@ -1,0 +1,4 @@
+# Isolated Figure 11 plotting environment for Python 3.12.
+# NumPy 1.26 avoids the NumPy 2.x ABI conflict with older system packages.
+numpy==1.26.4
+matplotlib==3.8.4

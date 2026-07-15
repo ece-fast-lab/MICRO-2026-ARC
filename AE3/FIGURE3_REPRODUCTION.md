@@ -6,35 +6,101 @@ every benchmark wrapper.
 
 ## Main reviewer path
 
-From the repository clone:
+Use the normal reviewer account for every command below. Do not use `sudo -i`
+or run an entire benchmark command through `sudo`; the artifact itself raises
+privilege only for the required host controls and migration manager.
+
+### 1. Set up SPR1
+
+From the repository clone after the reboot:
 
 ```bash
 cd AE3
 bash set_default/setup_default.sh all
-bash sw/fig3/run_fig3_gapbs.sh pr_tw
 ```
 
 `pr_tw` means GAPBS PageRank with the Twitter graph. This is the primary,
-time-bounded Artifact Evaluation path. The script presents the configuration,
-asks the reviewer to confirm that SPL1 is loaded, runs each point in order,
-validates the logs, writes a CSV, and creates PNG/PDF plots.
+time-bounded Artifact Evaluation workload.
 
-Use one of these modes when appropriate:
+### 2. Collect data without plotting
+
+The recommended automatic command runs all eleven cases and skips plotting:
 
 ```bash
-# No interactive questions; run/rerun all eleven points.
-bash sw/fig3/run_fig3_gapbs.sh pr_tw all yes
-
-# Reuse valid points and run only missing or incomplete points.
-bash sw/fig3/run_fig3_gapbs.sh pr_tw --resume
-
-# Do not touch hardware; parse and plot the existing canonical logs.
-bash sw/fig3/run_fig3_gapbs.sh pr_tw --skip-benchmark
+bash sw/fig3/run_fig3_all_yes.sh
 ```
 
-When a canonical run directory already exists, a normal rerun asks first and
-the common runner moves the old directory/log to a numbered `.bak` name. The
-`--skip-benchmark` mode never moves or reruns benchmark output.
+`run_fig3_all_yes.sh [workload] [options]` defaults to `pr_tw`. It supplies
+automatic yes and `--skip-plot`, so the benchmark and CSV collection do not
+depend on Matplotlib. The equivalent interactive command is:
+
+```bash
+bash sw/fig3/run_fig3_gapbs.sh pr_tw --case all --skip-plot
+```
+
+To run cases one at a time, select from `baseline`, `anb`, `damon`,
+`cache16`, `cache32`, `cache64`, `cache96`, `cms16`, `cms32`, `cms64`, and
+`cms96`:
+
+```bash
+bash sw/fig3/run_fig3_case.sh pr_tw baseline
+bash sw/fig3/run_fig3_case.sh pr_tw cache32
+bash sw/fig3/run_fig3_case.sh pr_tw cms96
+```
+
+The wrapper interface is
+`run_fig3_case.sh <workload> <case> [options]`; the underlying runner also
+accepts `--case <case|all>` directly. The case wrapper always skips plotting.
+After all individual cases finish, run the all-case command with
+`--resume --skip-plot` once to validate the full sweep and generate its CSV.
+
+The two rerun modes have intentionally different meanings:
+
+
+```bash
+# Unconditionally accept rerunning selected cases. Existing canonical output
+# is moved to the next .bak path.
+bash sw/fig3/run_fig3_gapbs.sh pr_tw --case all all yes --skip-plot
+
+# Reuse valid points and run only missing or incomplete points.
+bash sw/fig3/run_fig3_gapbs.sh pr_tw --case all --resume --skip-plot
+```
+
+Use `--resume` after an interruption unless the existing valid points are
+intentionally being replaced.
+
+### 3. Plot the completed data later
+
+The collectors use Python's standard library. Only the PNG/PDF step needs
+NumPy and Matplotlib. On SPR1, select the compatible Ubuntu system packages
+explicitly and run the processing-only wrapper:
+
+```bash
+env PYTHONNOUSERSITE=1 \
+  PYTHONPATH=/usr/lib/python3/dist-packages \
+  python3 -c 'import numpy, matplotlib; print(numpy.__version__, matplotlib.__version__)'
+
+env PYTHONNOUSERSITE=1 \
+  PYTHONPATH=/usr/lib/python3/dist-packages \
+  bash sw/fig3/plot_fig3.sh pr_tw
+```
+
+`plot_fig3.sh <workload> [options]` uses `--skip-benchmark` internally. It
+validates the existing canonical logs and never moves output, runs a workload,
+or touches hardware.
+
+If the system-package import fails, create and activate a virtual environment
+only for plotting:
+
+```bash
+sudo apt install -y python3-venv
+python3 -m venv "$HOME/.venvs/micro-2026-arc-plot"
+source "$HOME/.venvs/micro-2026-arc-plot/bin/activate"
+python3 -m pip install --upgrade pip
+python3 -m pip install -r sw/fig3/requirements.txt
+bash sw/fig3/plot_fig3.sh pr_tw
+deactivate
+```
 
 ## Figure 3 points
 
@@ -96,20 +162,20 @@ was confirmed for a benchmark run or omitted in processing-only mode.
 All GAPBS algorithms and datasets are optional:
 
 ```bash
-bash sw/fig3/run_fig3_gapbs.sh bc_tw
-bash sw/fig3/run_fig3_gapbs.sh bfs_web
-bash sw/fig3/run_fig3_gapbs.sh cc twitter
-bash sw/fig3/run_fig3_gapbs.sh pr web
+bash sw/fig3/run_fig3_gapbs.sh bc_tw --skip-plot
+bash sw/fig3/run_fig3_gapbs.sh bfs_web --skip-plot
+bash sw/fig3/run_fig3_gapbs.sh cc twitter --skip-plot
+bash sw/fig3/run_fig3_gapbs.sh pr web --skip-plot
 ```
 
 The short database suffixes are `tw` and `web`. SPEC is also optional:
 
 ```bash
-bash sw/fig3/run_fig3_spec.sh 502   # gcc_r
-bash sw/fig3/run_fig3_spec.sh 505   # mcf_r
-bash sw/fig3/run_fig3_spec.sh 507   # cactuBSSN_r
-bash sw/fig3/run_fig3_spec.sh 527   # cam4_r
-bash sw/fig3/run_fig3_spec.sh 554   # roms_r
+bash sw/fig3/run_fig3_spec.sh 502 --skip-plot   # gcc_r
+bash sw/fig3/run_fig3_spec.sh 505 --skip-plot   # mcf_r
+bash sw/fig3/run_fig3_spec.sh 507 --skip-plot   # cactuBSSN_r
+bash sw/fig3/run_fig3_spec.sh 527 --skip-plot   # cam4_r
+bash sw/fig3/run_fig3_spec.sh 554 --skip-plot   # roms_r
 ```
 
 Benchmark suites and Twitter/web graphs are not distributed with this

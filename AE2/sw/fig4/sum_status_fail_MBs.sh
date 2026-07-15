@@ -65,8 +65,12 @@ re_mig  = re_kv("pgmigrate_success")
 re_fail = re_kv("pgmigrate_fail")
 re_numa = re_kv("numa_pages_migrated")
 
-# Process memory table
-re_proc_table = re.compile(r"^\s*Per-node process memory usage \(in MBs\)\s*$", re.IGNORECASE)
+# Process memory table.  numastat uses a generic header when several matching
+# processes exist, but appends "for PID ..." when exactly one process matches.
+re_proc_table = re.compile(
+    r"^\s*Per-node process memory usage \(in MBs\)(?:\s+for PID\b.*)?\s*$",
+    re.IGNORECASE,
+)
 re_total_row  = re.compile(r"^\s*Total\b", re.IGNORECASE)
 
 samples = []   # list of (datetime, dict)

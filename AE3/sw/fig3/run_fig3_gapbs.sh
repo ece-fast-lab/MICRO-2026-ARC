@@ -10,7 +10,8 @@ Usage:
   run_fig3_gapbs.sh <bc|bfs|cc|pr>_<tw|web> [options]
 
 Main AE example:  bash sw/fig3/run_fig3_gapbs.sh pr_tw
-See run_figure3.sh --help for --yes, --resume, and --skip-benchmark.
+See run_figure3.sh --help for --case, --yes, --resume,
+--skip-benchmark, and --skip-plot.
 EOF
 }
 

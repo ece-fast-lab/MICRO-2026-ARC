@@ -5,7 +5,9 @@ from __future__ import annotations
 import csv
 import hashlib
 import os
+import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -118,6 +120,69 @@ class Figure11ShellIntegrationTest(unittest.TestCase):
             metadata = (result_dir / "run_metadata.txt").read_text(encoding="utf-8")
             self.assertIn(f"adaptive_cfg_snapshot={model_cfg}\n", metadata)
             self.assertIn(f"adaptive_cfg_sha256={model_sha256}\n", metadata)
+            self.assertIn("plot_status=generated\n", metadata)
+
+            # Data processing must remain usable without importing Matplotlib.
+            png = result_dir / "figure11_normalized_performance.png"
+            pdf = result_dir / "figure11_normalized_performance.pdf"
+            png.unlink()
+            pdf.unlink()
+            skip_plot_result = subprocess.run(
+                command + ["--skip-plot"],
+                cwd=ARTIFACT_DIR,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                skip_plot_result.returncode,
+                0,
+                msg=(
+                    f"stdout:\n{skip_plot_result.stdout}\n"
+                    f"stderr:\n{skip_plot_result.stderr}"
+                ),
+            )
+            self.assertFalse(png.exists())
+            self.assertFalse(pdf.exists())
+            metadata = (result_dir / "run_metadata.txt").read_text(encoding="utf-8")
+            self.assertIn("plot_status=skipped_by_request\n", metadata)
+
+            # A broken Matplotlib installation must be reported only after the
+            # standard-library collector has successfully regenerated its CSVs.
+            fake_bin = results_root / "fake-bin"
+            fake_bin.mkdir()
+            fake_python = fake_bin / "python3"
+            fake_python.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"${1:-}\" == -c && \"${2:-}\" == "
+                "'import matplotlib' ]]; then exit 1; fi\n"
+                f"exec {shlex.quote(sys.executable)} \"$@\"\n",
+                encoding="utf-8",
+            )
+            fake_python.chmod(0o755)
+            no_matplotlib_env = env.copy()
+            no_matplotlib_env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+            no_matplotlib_result = subprocess.run(
+                command,
+                cwd=ARTIFACT_DIR,
+                env=no_matplotlib_env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                no_matplotlib_result.returncode,
+                0,
+                msg=(
+                    f"stdout:\n{no_matplotlib_result.stdout}\n"
+                    f"stderr:\n{no_matplotlib_result.stderr}"
+                ),
+            )
+            self.assertIn("Matplotlib is unavailable", no_matplotlib_result.stderr)
+            self.assertTrue((result_dir / "figure11_results.csv").is_file())
+            metadata = (result_dir / "run_metadata.txt").read_text(encoding="utf-8")
+            self.assertIn("plot_status=skipped_matplotlib_unavailable\n", metadata)
 
             # A mutable pretrained path must not validate as the frozen cfg.
             stale_log = adaptive_manager_logs[0]
@@ -137,6 +202,55 @@ class Figure11ShellIntegrationTest(unittest.TestCase):
             )
             self.assertNotEqual(stale_result.returncode, 0)
             self.assertIn("did not load the requested adaptive cfg", stale_result.stderr)
+
+    def test_method_guards_and_new_wrappers(self) -> None:
+        local_without_guard = subprocess.run(
+            [
+                "bash",
+                str(FIG11_DIR / "run_figure11.sh"),
+                "bc_tw",
+                "--method",
+                "local",
+            ],
+            cwd=ARTIFACT_DIR,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(local_without_guard.returncode, 0)
+        self.assertIn("requires --include-local", local_without_guard.stderr)
+
+        processing_one_method = subprocess.run(
+            [
+                "bash",
+                str(FIG11_DIR / "run_figure11.sh"),
+                "bc_tw",
+                "--method",
+                "cxl",
+                "--skip-benchmark",
+            ],
+            cwd=ARTIFACT_DIR,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(processing_one_method.returncode, 0)
+        self.assertIn("requires --method all", processing_one_method.stderr)
+
+        for wrapper in (
+            "run_fig11_case.sh",
+            "run_fig11_all_yes.sh",
+            "plot_fig11.sh",
+            "run_all_primary_th16.sh",
+        ):
+            completed = subprocess.run(
+                ["bash", str(FIG11_DIR / wrapper), "--help"],
+                cwd=ARTIFACT_DIR,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, msg=wrapper)
 
 
 if __name__ == "__main__":

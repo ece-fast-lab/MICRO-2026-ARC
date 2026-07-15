@@ -55,7 +55,13 @@ module build. The reviewer account needs passwordless or initially
 interactive `sudo` access for modules, MSRs, sysfs, cgroups, PCI configuration,
 and MMIO; benchmark runners refresh the authenticated timestamp without
 prompting during long runs.
-Figure plotting additionally requires Python 3 and matplotlib.
+Run setup and benchmarks from the normal reviewer account. Do not enter a
+`sudo -i` shell or put `sudo` in front of an entire benchmark command: the
+scripts elevate only the host controls and manager operations that require
+root, while the workload remains owned by the reviewer account.
+Result collection requires Python 3 but only the final plotting step requires
+NumPy/Matplotlib. Consequently, a missing or conflicting Matplotlib install
+does not need to block the long benchmark run.
 If an earlier benchmark left the intended isolation mask (`0-7,20` online),
 setup reports the inactive CPUs' frequency controls as `SKIP`; it still
 strictly validates and sets the active workload/manager CPUs to 2.0 GHz.
@@ -175,27 +181,107 @@ automatically when `damo` is on `PATH`.
 Figure 3 uses the SPL1 FPGA image (sampling every access). The scripts cannot
 read back the compile-time sampling ratio, so the reviewer must confirm the
 loaded image. After programming SPL1, power-cycling SPR1, cloning the artifact,
-and completing setup, run from `AE3`:
+and completing setup, use the following three-stage flow from `AE3`. Run these
+commands as the normal reviewer account, not from `sudo -i`.
+
+### 1. Set up SPR1
 
 ```bash
 bash set_default/setup_default.sh all
-bash sw/fig3/run_fig3_gapbs.sh pr_tw
 ```
 
-The second command asks before each long step. To accept every confirmation,
-or to continue an interrupted sweep while retaining complete points, use:
+### 2. Collect all benchmark data without plotting
+
+The convenience command below defaults to `pr_tw`, accepts every benchmark
+confirmation, runs all eleven Figure 3 cases, validates the logs, and writes
+the result CSV. It deliberately skips PNG/PDF generation so the long hardware
+run is independent of the current Python plotting environment.
 
 ```bash
-bash sw/fig3/run_fig3_gapbs.sh pr_tw all yes
-bash sw/fig3/run_fig3_gapbs.sh pr_tw --resume
+bash sw/fig3/run_fig3_all_yes.sh
 ```
 
-It runs eleven points: Baseline, ANB, DAMON, four Cache thresholds, and four
-CMS thresholds. Cache uses epoch `400000/400000`; CMS uses
-`400001/400001`, whose set low bit selects the CMS implementation. The four
-thresholds are `16`, `32`, `64`, and `96`. Baseline is fixed to the CXL node
-with `numactl --membind`, matching the original Figure 3 run rather than the
-common runner's more permissive two-node baseline default.
+The equivalent interactive and explicit automatic commands are:
+
+```bash
+bash sw/fig3/run_fig3_gapbs.sh pr_tw --case all --skip-plot
+bash sw/fig3/run_fig3_gapbs.sh pr_tw --case all all yes --skip-plot
+```
+
+`all yes` means rerun every selected case. If canonical output already exists,
+the runner moves it to the next numbered `.bak` path before rerunning. It is
+not the right choice merely to continue an interrupted sweep. To retain and
+reuse every already valid case while running only missing or incomplete cases:
+
+```bash
+bash sw/fig3/run_fig3_gapbs.sh pr_tw --case all --resume --skip-plot
+```
+
+Each case can also be run separately. This is useful for checking one policy
+before starting the complete sweep:
+
+```bash
+bash sw/fig3/run_fig3_case.sh pr_tw baseline
+bash sw/fig3/run_fig3_case.sh pr_tw anb
+bash sw/fig3/run_fig3_case.sh pr_tw damon
+bash sw/fig3/run_fig3_case.sh pr_tw cache32
+bash sw/fig3/run_fig3_case.sh pr_tw cms96
+```
+
+The selectable case set is `baseline`, `anb`, `damon`, `cache16`, `cache32`,
+`cache64`, `cache96`, `cms16`, `cms32`, `cms64`, and `cms96`; `all` selects
+all eleven through the main runner's `--case all` option.
+`run_fig3_case.sh <workload> <case> [options]` always skips plotting and passes
+options such as `--yes` and `--resume` through to the main runner.
+An individual case does not claim a complete Figure 3 CSV. After all eleven
+cases have been collected separately, validate the full set and create the CSV
+with:
+
+```bash
+bash sw/fig3/run_fig3_gapbs.sh pr_tw --case all --resume --skip-plot
+```
+
+Cache uses epoch `400000/400000`; CMS uses `400001/400001`, whose set low bit
+selects the CMS implementation. Baseline is fixed to the CXL node with
+`numactl --membind`, matching the original Figure 3 run rather than the common
+runner's more permissive two-node baseline default.
+
+### 3. Plot later with the system Python packages
+
+On SPR1, first confirm that the compatible Ubuntu NumPy and Matplotlib are
+selected instead of a conflicting package below `/usr/local` or the user site:
+
+```bash
+env PYTHONNOUSERSITE=1 \
+  PYTHONPATH=/usr/lib/python3/dist-packages \
+  python3 -c 'import numpy, matplotlib; print(numpy.__version__, matplotlib.__version__)'
+```
+
+Then parse the existing canonical logs and create the CSV, PNG, and PDF
+without touching the hardware:
+
+```bash
+env PYTHONNOUSERSITE=1 \
+  PYTHONPATH=/usr/lib/python3/dist-packages \
+  bash sw/fig3/plot_fig3.sh pr_tw
+```
+
+If the system-package import still fails, create a plotting-only virtual
+environment. Activating it is needed only for this final step:
+
+```bash
+sudo apt install -y python3-venv
+python3 -m venv "$HOME/.venvs/micro-2026-arc-plot"
+source "$HOME/.venvs/micro-2026-arc-plot/bin/activate"
+python3 -m pip install --upgrade pip
+python3 -m pip install -r sw/fig3/requirements.txt
+python3 -c 'import numpy, matplotlib; print(numpy.__version__, matplotlib.__version__)'
+bash sw/fig3/plot_fig3.sh pr_tw
+deactivate
+```
+
+`plot_fig3.sh` is processing-only: it validates and reuses existing canonical
+logs and never starts a benchmark or changes hardware state.
 
 For GAPBS, the collector requires exactly ten anchored `Trial Time:` records
 and computes the geometric mean of records 6--10. It deliberately ignores
@@ -213,10 +299,12 @@ results/figure3/gapbs/pr_twitter/
   runs/
 ```
 
-To regenerate only the CSV and plots from existing canonical logs:
+The underlying processing-only interface is also available directly:
 
 ```bash
-bash sw/fig3/run_fig3_gapbs.sh pr_tw --skip-benchmark
+env PYTHONNOUSERSITE=1 \
+  PYTHONPATH=/usr/lib/python3/dist-packages \
+  bash sw/fig3/run_fig3_gapbs.sh pr_tw --skip-benchmark --yes
 ```
 
 Reuse/processing modes also require `runtime_summary.txt` to report successful
@@ -230,14 +318,14 @@ selectors, output validation rules, and optional experiments.
 Other GAPBS combinations use either the short selector or two arguments:
 
 ```bash
-bash sw/fig3/run_fig3_gapbs.sh bfs_tw
-bash sw/fig3/run_fig3_gapbs.sh cc web
+bash sw/fig3/run_fig3_gapbs.sh bfs_tw --skip-plot
+bash sw/fig3/run_fig3_gapbs.sh cc web --skip-plot
 ```
 
 SPEC CPU2017 support is included but is optional for the reviewer. For gcc:
 
 ```bash
-bash sw/fig3/run_fig3_spec.sh 502
+bash sw/fig3/run_fig3_spec.sh 502 --skip-plot
 ```
 
 The validated SPEC IDs are `502`, `505`, `507`, `527`, and `554`. The SPEC

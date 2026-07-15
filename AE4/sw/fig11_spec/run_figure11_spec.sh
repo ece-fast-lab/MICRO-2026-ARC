@@ -29,7 +29,12 @@ Options:
   all yes, -y, --yes         Confirm the SPL1 image and all benchmark runs
   --resume                   Reuse valid canonical runs; rerun only invalid or
                              missing runs
-  --skip-benchmark           Parse and plot existing canonical logs only
+  --skip-benchmark           Validate and collect existing canonical logs only;
+                             plot unless --skip-plot is added
+  --skip-plot                Run/validate benchmarks and, once the full sweep
+                             exists, collect CSV without importing Matplotlib
+  --method, --case <name>    Run only all, cxl, cache, cms, or adaptive
+                             (local additionally requires --include-local)
   --include-local            Add optional Local-only; running requires
                              CONFIRM_LOCAL_MEMMAP=YES after a memory-map reboot
   -h, --help                 Show this help
@@ -57,7 +62,9 @@ threshold=16
 auto_yes=0
 resume=0
 skip_benchmark=0
+skip_plot=0
 include_local=0
+selected_method=all
 while (( $# > 0 )); do
     case "$1" in
         --threshold)
@@ -70,6 +77,10 @@ while (( $# > 0 )); do
             auto_yes=1; shift 2; continue ;;
         --resume) resume=1 ;;
         --skip-benchmark) skip_benchmark=1 ;;
+        --skip-plot) skip_plot=1 ;;
+        --method|--case)
+            (( $# >= 2 )) || ae_die "$1 requires a value"
+            selected_method="$2"; shift 2; continue ;;
         --include-local) include_local=1 ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; ae_die "unknown option: $1" ;;
@@ -82,14 +93,23 @@ case "$threshold" in
 esac
 (( resume == 0 || skip_benchmark == 0 )) || \
     ae_die "--resume and --skip-benchmark are mutually exclusive"
+case "$selected_method" in
+    all|cxl|cache|cms|adaptive) ;;
+    local)
+        (( include_local == 1 )) || \
+            ae_die "--method local requires --include-local and CONFIRM_LOCAL_MEMMAP=YES when running"
+        ;;
+    *) ae_die "--method/--case must be one of: all, cxl, cache, cms, adaptive, local" ;;
+esac
+if (( skip_benchmark == 1 )) && [[ "$selected_method" != all ]]; then
+    ae_die "--skip-benchmark processes the complete sweep and therefore requires --method all"
+fi
 CHMU_SPEC_COPIES="${CHMU_SPEC_COPIES:-8}"
 [[ "$CHMU_SPEC_COPIES" =~ ^[1-9][0-9]*$ ]] || \
     ae_die "CHMU_SPEC_COPIES must be a positive decimal integer"
 
 command -v python3 >/dev/null 2>&1 || ae_die "python3 is required"
 command -v sha256sum >/dev/null 2>&1 || ae_die "sha256sum is required"
-python3 -c 'import matplotlib' >/dev/null 2>&1 || \
-    ae_die "Python matplotlib is required (for example: python3 -m pip install matplotlib)"
 [[ -r "${SCRIPT_DIR}/collect_spec_results.py" ]] || \
     ae_die "missing optional SPEC collector"
 [[ -r "${SW_DIR}/fig11/plot_figure11.py" ]] || \
@@ -143,6 +163,7 @@ printf '\nOptional SPEC Figure 11-style comparison\n'
 printf '  workload       : %s (SPEC %s)\n' "$display_name" "$workload_key"
 printf '  threshold      : %s\n' "$threshold"
 printf '  methods        : %s\n' "${labels[*]}"
+printf '  selected case  : %s\n' "$selected_method"
 printf '  repetitions    : 5 complete SPEC invocations per method\n'
 printf '  selected data  : final total-seconds record per invocation (5 samples/method)\n'
 printf '  plot metric    : CXL-only time / method time (higher is better)\n'
@@ -327,10 +348,32 @@ run_point() {
 
 for repeat in 1 2 3 4 5; do
     for method_index in "${!methods[@]}"; do
+        if [[ "$selected_method" != all && \
+              "${methods[$method_index]}" != "$selected_method" ]]; then
+            continue
+        fi
         run_point "$((method_index + 1))" "$repeat" \
             "${methods[$method_index]}" "${labels[$method_index]}"
     done
 done
+
+full_sweep_valid() {
+    local method
+    local repeat
+    for method in "${methods[@]}"; do
+        for repeat in 1 2 3 4 5; do
+            set_point "$method" "$repeat"
+            point_valid || return 1
+        done
+    done
+}
+
+if [[ "$selected_method" != all ]] && ! full_sweep_valid; then
+    printf '\nCase %s completed. Other canonical cases are not complete yet.\n' \
+        "$selected_method"
+    printf 'Run the remaining cases, then process the full sweep with --skip-benchmark.\n'
+    exit 0
+fi
 
 if (( skip_benchmark == 1 )); then
     printf '[1/3] Benchmark skipped; all canonical SPEC logs and summaries validated.\n'
@@ -344,11 +387,21 @@ python3 "${SCRIPT_DIR}/collect_spec_results.py" \
     --summary-output "$summary_csv" \
     --samples-output "$samples_csv"
 
-printf '[3/3] Plot normalized performance.\n'
-python3 "${SW_DIR}/fig11/plot_figure11.py" \
-    --input "$summary_csv" \
-    --output-prefix "$plot_prefix" \
-    --title "Optional SPEC: ${display_name}, threshold ${threshold}"
+plot_status=generated
+if (( skip_plot == 1 )); then
+    plot_status=skipped_by_request
+    printf '[3/3] Plot skipped by --skip-plot.\n'
+elif ! python3 -c 'import matplotlib' >/dev/null 2>&1; then
+    plot_status=skipped_matplotlib_unavailable
+    printf 'WARNING: CSV collection completed, but Matplotlib is unavailable or incompatible; plot skipped.\n' >&2
+    printf 'Rerun with --skip-benchmark later in a working plotting environment.\n' >&2
+else
+    printf '[3/3] Plot normalized performance.\n'
+    python3 "${SW_DIR}/fig11/plot_figure11.py" \
+        --input "$summary_csv" \
+        --output-prefix "$plot_prefix" \
+        --title "Optional SPEC: ${display_name}, threshold ${threshold}"
+fi
 
 {
     printf 'experiment=figure11_optional_spec\n'
@@ -370,6 +423,7 @@ python3 "${SW_DIR}/fig11/plot_figure11.py" \
     printf 'adaptive_cfg_snapshot=%s\n' "$model_cfg"
     printf 'adaptive_cfg_sha256=%s\n' "$model_cfg_sha256"
     printf 'local_included=%s\n' "$include_local"
+    printf 'plot_status=%s\n' "$plot_status"
     printf 'completed_at=%s\n' "$(TZ=America/Chicago date --iso-8601=seconds)"
 } > "$metadata_file"
 
@@ -378,5 +432,8 @@ printf '  metadata : %s\n' "$metadata_file"
 printf '  manifest : %s\n' "$manifest"
 printf '  samples  : %s\n' "$samples_csv"
 printf '  results  : %s\n' "$summary_csv"
-printf '  plot     : %s.png\n' "$plot_prefix"
-printf '  plot     : %s.pdf\n' "$plot_prefix"
+printf '  plot status: %s\n' "$plot_status"
+if [[ "$plot_status" == generated ]]; then
+    printf '  plot     : %s.png\n' "$plot_prefix"
+    printf '  plot     : %s.pdf\n' "$plot_prefix"
+fi
