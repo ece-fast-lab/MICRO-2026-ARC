@@ -32,11 +32,26 @@ bash sw/fig3/run_fig3_all_yes.sh
 
 `run_fig3_all_yes.sh [workload] [options]` defaults to `pr_tw`. It supplies
 automatic yes and `--skip-plot`, so the benchmark and CSV collection do not
-depend on Matplotlib. The equivalent interactive command is:
+depend on Matplotlib. It also waits 30 seconds after each newly executed case
+before starting the next one, allowing the previous cleanup and asynchronous
+log writer to settle. The equivalent interactive command is:
 
 ```bash
 bash sw/fig3/run_fig3_gapbs.sh pr_tw --case all --skip-plot
 ```
+
+`FIG3_CASE_INTERVAL_SEC=<seconds>` overrides this interval; retain the default
+for normal reviewer runs.
+
+If the shared ARC host lock is still temporarily busy after that interval,
+the Figure 3 driver automatically retries the same case every 10 seconds for
+up to 300 seconds. Already completed cases and their output directories are
+preserved. This fallback applies only to the exact shared-lock contention
+error; benchmark, setup, and cleanup failures still stop immediately. Override
+the defaults with `FIG3_LOCK_RETRY_INTERVAL_SEC=<seconds>` and
+`FIG3_LOCK_RETRY_TIMEOUT_SEC=<seconds>`. A timeout of `0` disables automatic
+lock retry. If the bounded retry expires, wait for the other ARC command to
+exit and rerun with `--resume`.
 
 To run cases one at a time, select from `baseline`, `anb`, `damon`,
 `cache16`, `cache32`, `cache64`, `cache96`, `cms16`, `cms32`, `cms64`, and

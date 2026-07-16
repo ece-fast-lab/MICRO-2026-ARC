@@ -119,7 +119,7 @@ using duplicate_pfns_debug_map_t = std::unordered_map<uint64_t, uint64_t, std::h
 
 static const uint64_t kDuplicateDebugPollWindow = 10;
 static const uint64_t kMode0DuplicateCountThreshold = 3;
-static const char* kDefaultPerfBin = "/usr/bin/perf";
+static const char* kDefaultPerfBin = "/research/chihuns2/kernel/linux-6.5.5/tools/perf/perf";
 static const unsigned int kDefaultPredictorIntervalMs = 100;
 static const unsigned int kPerfSampleStaleFloorMs = 5000;
 static const unsigned int kPerfCollectorKeepaliveSec = 86400;

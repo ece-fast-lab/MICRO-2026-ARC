@@ -196,6 +196,7 @@ else
   SUDO="${SUDO:-sudo}"
 fi
 ARC_LOCK_FILE="${ARC_LOCK_FILE:-/run/lock/micro_2026_arc.lock}"
+ARC_LOCK_HELD=0
 # ---------------------------------
 
 # shellcheck source=manager_runtime.sh
@@ -205,11 +206,33 @@ source "${SCRIPT_DIR}/runner_controls.sh"
 
 acquire_exclusive_lock() {
   command -v flock >/dev/null 2>&1 || { echo "ERROR: flock is required" >&2; exit 1; }
+  if [[ -n "${ARC_LOCK_BUSY_MARKER:-}" ]]; then
+    rm -f -- "${ARC_LOCK_BUSY_MARKER}" 2>/dev/null || true
+  fi
   if [[ ! -e "${ARC_LOCK_FILE}" ]]; then
     (umask 000; set -o noclobber; : > "${ARC_LOCK_FILE}") 2>/dev/null || true
   fi
   exec 9<"${ARC_LOCK_FILE}" || { echo "ERROR: cannot open lock ${ARC_LOCK_FILE}" >&2; exit 1; }
-  flock -n 9 || { echo "ERROR: another ARC setup or benchmark command is active" >&2; exit 1; }
+  if ! flock -n 9; then
+    if [[ -n "${ARC_LOCK_BUSY_MARKER:-}" ]]; then
+      (umask 077; : > "${ARC_LOCK_BUSY_MARKER}") 2>/dev/null || true
+    fi
+    echo "ERROR: another ARC setup or benchmark command is active" >&2
+    exit 1
+  fi
+  ARC_LOCK_HELD=1
+}
+
+release_exclusive_lock() {
+  [[ "${ARC_LOCK_HELD:-0}" == "1" ]] || return 0
+
+  # Background jobs and the process-substitution tee inherit FD 9.  Closing
+  # only the parent shell's descriptor can therefore leave the host-wide lock
+  # held after a completed case.  Explicit LOCK_UN applies to the shared open
+  # file description, so the next case can start as soon as cleanup finishes.
+  flock -u 9 2>/dev/null || true
+  exec 9<&-
+  ARC_LOCK_HELD=0
 }
 
 resolve_gapbs_graph() {
@@ -336,6 +359,7 @@ ensure_page_migrate_loaded() {
 }
 
 acquire_exclusive_lock
+trap release_exclusive_lock EXIT
 if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
   sudo -v
 fi
@@ -499,7 +523,7 @@ cleanup() {
   echo "[cleanup] end"
 }
 
-trap cleanup EXIT
+trap 'cleanup; release_exclusive_lock' EXIT
 trap 'echo "[signal] interrupted"; cleanup; exit 130' INT TERM
 
 if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then

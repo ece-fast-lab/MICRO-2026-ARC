@@ -5,12 +5,16 @@ The manifest must contain exactly these columns::
 
     order,repeat,method,label,log_path
 
-Each method has five manifest rows (``repeat`` 1--5).  Every referenced GAPBS
+Each manifest method has five rows (``repeat`` 1--5).  Every referenced GAPBS
 log must contain exactly ten positive ``Trial Time:`` values.  Trials 6--10
-from each repeat are retained, giving 25 samples per method.  A method's
-runtime is the geometric mean of those 25 samples, and normalized performance
-is ``CXL-only geometric mean / method geometric mean``.  Values above 1.0 are
-therefore better than CXL-only.
+from each repeat are retained, giving 25 samples per manifest method.  The two
+adaptive directions (400000/400001 and 400001/400000) are measured separately.
+The direction with the lower 25-sample geometric-mean runtime is emitted as the
+single final ``adaptive`` result.  Both candidates and all 50 selected adaptive
+samples remain in the CSV outputs for auditability.
+
+A final method's normalized performance is ``CXL-only geometric mean / method
+geometric mean``.  Values above 1.0 are therefore better than CXL-only.
 
 Relative log paths are resolved from the manifest's directory so that a whole
 experiment output directory remains relocatable.
@@ -29,7 +33,11 @@ from typing import Dict, List, Sequence, Tuple
 
 
 REQUIRED_MANIFEST_COLUMNS = ("order", "repeat", "method", "label", "log_path")
-REQUIRED_METHODS = ("cxl", "cache", "cms", "adaptive")
+ADAPTIVE_METHODS = (
+    "adaptive_400000_400001",
+    "adaptive_400001_400000",
+)
+REQUIRED_METHODS = ("cxl", "cache", "cms") + ADAPTIVE_METHODS
 OPTIONAL_METHOD = "local"
 ALLOWED_METHODS = REQUIRED_METHODS + (OPTIONAL_METHOD,)
 EXPECTED_REPEATS = frozenset(range(1, 6))
@@ -49,6 +57,9 @@ SUMMARY_COLUMNS = (
     "geomean_seconds",
     "cxl_geomean_seconds",
     "normalized_performance",
+    "selected_adaptive_direction",
+    "adaptive_400000_400001_geomean_seconds",
+    "adaptive_400001_400000_geomean_seconds",
     "manifest_path",
 )
 
@@ -62,6 +73,7 @@ SAMPLE_COLUMNS = (
     "seconds",
     "manifest_log_path",
     "resolved_log_path",
+    "selected_for_adaptive_bar",
 )
 
 
@@ -288,7 +300,8 @@ def read_manifest(manifest_path: Path) -> List[ManifestRow]:
         if unexpected:
             details.append("unexpected " + ", ".join(unexpected))
         raise CollectionError(
-            "manifest methods must be cxl, cache, cms, adaptive with optional "
+            "manifest methods must be cxl, cache, cms, "
+            "adaptive_400000_400001, adaptive_400001_400000 with optional "
             "local" + (": " + "; ".join(details) if details else "")
         )
 
@@ -322,6 +335,8 @@ def _write_summary(
     results: Sequence[MethodResult],
     cxl_geomean: float,
     manifest_path: Path,
+    selected_adaptive_direction: str,
+    adaptive_geomeans: Dict[str, float],
 ) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -342,6 +357,27 @@ def _write_summary(
                         "normalized_performance": format(
                             result.normalized_performance, ".12g"
                         ),
+                        "selected_adaptive_direction": (
+                            selected_adaptive_direction
+                            if result.method == "adaptive"
+                            else ""
+                        ),
+                        "adaptive_400000_400001_geomean_seconds": (
+                            format(
+                                adaptive_geomeans["adaptive_400000_400001"],
+                                ".12g",
+                            )
+                            if result.method == "adaptive"
+                            else ""
+                        ),
+                        "adaptive_400001_400000_geomean_seconds": (
+                            format(
+                                adaptive_geomeans["adaptive_400001_400000"],
+                                ".12g",
+                            )
+                            if result.method == "adaptive"
+                            else ""
+                        ),
                         "manifest_path": str(manifest_path),
                     }
                 )
@@ -349,7 +385,11 @@ def _write_summary(
         raise CollectionError(f"cannot write summary CSV {path}: {exc}") from exc
 
 
-def _write_samples(path: Path, results: Sequence[MethodResult]) -> None:
+def _write_samples(
+    path: Path,
+    results: Sequence[MethodResult],
+    selected_adaptive_direction: str,
+) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8", newline="") as output_file:
@@ -368,6 +408,13 @@ def _write_samples(path: Path, results: Sequence[MethodResult]) -> None:
                             "seconds": format(sample.seconds, ".12g"),
                             "manifest_log_path": sample.row.manifest_log_path,
                             "resolved_log_path": str(sample.row.resolved_log_path),
+                            "selected_for_adaptive_bar": (
+                                "yes"
+                                if result.method == selected_adaptive_direction
+                                else "no"
+                                if result.method in ADAPTIVE_METHODS
+                                else ""
+                            ),
                         }
                     )
     except OSError as exc:
@@ -418,10 +465,10 @@ def collect_results(
     }
     cxl_geomean = method_geomeans["cxl"]
 
-    results = []
+    manifest_results = []
     for method, (order, label) in method_metadata.items():
         geomean = method_geomeans[method]
-        results.append(
+        manifest_results.append(
             MethodResult(
                 order=order,
                 method=method,
@@ -431,10 +478,54 @@ def collect_results(
                 samples=tuple(grouped_samples[method]),
             )
         )
+    manifest_results.sort(key=lambda result: result.order)
+
+    # Choose on runtime, not rounded normalized performance.  A deterministic
+    # tie goes to the forward direction in ADAPTIVE_METHODS order.
+    selected_adaptive_direction = min(
+        ADAPTIVE_METHODS,
+        key=lambda method: (
+            method_geomeans[method],
+            ADAPTIVE_METHODS.index(method),
+        ),
+    )
+    adaptive_orders = [method_metadata[method][0] for method in ADAPTIVE_METHODS]
+    selected_adaptive_geomean = method_geomeans[selected_adaptive_direction]
+
+    # The plot consumes one final Adaptive row.  The direction-level rows are
+    # deliberately kept out of this list so Figure 11 remains four bars (or
+    # five when Local-only is explicitly included).
+    results = [
+        result
+        for result in manifest_results
+        if result.method not in ADAPTIVE_METHODS
+    ]
+    results.append(
+        MethodResult(
+            order=min(adaptive_orders),
+            method="adaptive",
+            label="Adaptive",
+            geomean_seconds=selected_adaptive_geomean,
+            normalized_performance=cxl_geomean / selected_adaptive_geomean,
+            samples=tuple(grouped_samples[selected_adaptive_direction]),
+        )
+    )
     results.sort(key=lambda result: result.order)
 
-    _write_summary(summary_output, results, cxl_geomean, manifest_path)
-    _write_samples(samples_output, results)
+    adaptive_geomeans = {
+        method: method_geomeans[method] for method in ADAPTIVE_METHODS
+    }
+    _write_summary(
+        summary_output,
+        results,
+        cxl_geomean,
+        manifest_path,
+        selected_adaptive_direction,
+        adaptive_geomeans,
+    )
+    _write_samples(
+        samples_output, manifest_results, selected_adaptive_direction
+    )
     return len(results)
 
 

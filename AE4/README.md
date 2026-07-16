@@ -1,18 +1,108 @@
-# MICRO 2026 ARC Artifact Evaluation: Figure 11
+# AE4 – Adaptive Cache/CMS Performance (Figure 11)
 
-This directory is the portable SPR1 package for reproducing Figure 11: a
-four-bar comparison of CXL-only, static CHMU-Cache, static CHMU-CMS, and the
-adaptive Cache/CMS policy. The primary reviewer workloads are GAPBS `bc_tw`,
-`bfs_tw`, and `pr_tw`. All artifact-local paths are derived from the Git clone;
-only separately installed benchmarks, graph datasets, and the FPGA tool use
-host-specific absolute paths.
+AE4 compares CXL-only, static CHMU-Cache, static CHMU-CMS, and Adaptive for
+GAPBS `bc_tw`, `bfs_tw`, and `pr_tw`, then draws the three workloads and their
+geometric mean in one figure. This front section is the complete reviewer
+path. Training, optional SPEC runs, and implementation details are preserved
+in the [Appendix](#appendix-detailed-reference).
 
-The short step-by-step procedure is in
-[`FIGURE11_REPRODUCTION.md`](FIGURE11_REPRODUCTION.md). The optional 20-trial
-training and suite-isolated Leave-One-Benchmark-Out workflow is documented in
-[`sw/ml/README.md`](sw/ml/README.md).
+## Artifact at a glance
 
-## Reviewer quick path
+| Item | Reviewer path |
+|---|---|
+| Target | Figure 11 with `bc_tw`, `bfs_tw`, and `pr_tw` |
+| FPGA image | `chmu_ae_merge_SPL1` |
+| Methods | CXL-only, CHMU-Cache, CHMU-CMS, Adaptive |
+| Supplied model | Pretrained suite-isolated LOBO configuration |
+| Main output | Three workloads plus `GeoMean` in one PNG/PDF |
+
+## Quick start
+
+Run commands from the normal reviewer account. Do not use `sudo -i` and do
+not put `sudo` in front of an entire setup or benchmark command. NumPy and
+Matplotlib are needed only for the final plot.
+
+### 1. Program the SPL1 FPGA image
+
+On the FPGA programming server:
+
+```bash
+cd MICRO-2026-ARC/AE4
+unzip -o program_script/chmu_ae_merge_SPL1.zip -d program_script
+bash program_script/update_cdf_paths.sh
+bash program_script/program_spr1.sh chmu_ae_merge_SPL1.cdf
+```
+
+Use the power-cycle command supplied separately by the authorized system
+operator. BMC credentials are intentionally not included in this artifact.
+Wait for SPR1 to boot, reconnect, and verify the custom kernel and NUMA nodes:
+
+```bash
+uname -r
+numactl -H
+```
+
+Expected kernel: `6.11.0-mig-offload+`.
+
+### 2. Check the external benchmark paths
+
+On SPR1, verify the GAPBS binaries, Twitter graph, and `CHMU_PERF_BIN` in:
+
+```text
+AE4/sw/config/benchmark_paths.env
+```
+
+### 3. Configure SPR1
+
+```bash
+cd MICRO-2026-ARC/AE4
+bash set_default/setup_default.sh all
+```
+
+### 4. Collect all three primary workloads
+
+The wrapper runs `bc_tw`, `bfs_tw`, and `pr_tw` sequentially, accepts all
+prompts, collects CSV results, and skips plotting:
+
+```bash
+cd MICRO-2026-ARC/AE4
+bash sw/fig11/run_all_primary_th16.sh
+```
+
+After an interruption, preserve complete canonical runs and continue:
+
+```bash
+bash sw/fig11/run_all_primary_th16.sh --resume
+```
+
+### 5. Plot the combined Figure 11
+
+This processing-only command validates existing runs and does not access the
+FPGA or start GAPBS:
+
+```bash
+cd MICRO-2026-ARC/AE4
+env PYTHONNOUSERSITE=1 \
+  PYTHONPATH=/usr/lib/python3/dist-packages \
+  bash sw/fig11/plot_fig11_primary_combined.sh --threshold 16
+```
+
+## Expected output
+
+```text
+results/figure11/th16/figure11_primary_combined_normalized_performance.png
+results/figure11/th16/figure11_primary_combined_normalized_performance.pdf
+```
+
+The plot reports `CXL-only time / method time`; values above `1.0` are better.
+Adaptive uses five repetitions in each epoch direction and reports the faster
+complete direction for each workload. See
+[`FIGURE11_REPRODUCTION.md`](FIGURE11_REPRODUCTION.md) for the detailed flow
+and [`sw/ml/README.md`](sw/ml/README.md) for optional retraining.
+
+# Appendix: Detailed reference
+
+## Detailed reviewer workflow
 
 After the SPL1 POF has been programmed and SPR1 has been power-cycled, run the
 hardware setup and long data collection from the normal reviewer account. Do
@@ -28,8 +118,9 @@ bash set_default/setup_default.sh all
 ### 2. Collect benchmark data without plotting
 
 For one primary workload, the following convenience wrapper accepts all
-prompts, runs all four methods at threshold 16, validates/collects their data,
-and skips PNG/PDF generation:
+prompts, runs all four reported methods at threshold 16, validates/collects
+their data, and skips PNG/PDF generation. Adaptive evaluates five repetitions
+of both `400000/400001` and `400001/400000` and reports the better direction:
 
 ```bash
 bash sw/fig11/run_fig11_all_yes.sh bc_tw --threshold 16
@@ -43,6 +134,22 @@ plotting disabled:
 bash sw/fig11/run_all_primary_th16.sh
 ```
 
+Newly executed canonical invocations are separated by 30 seconds, including
+the boundary between primary workloads when needed. Valid points reused by
+`--resume`, processing-only `--skip-benchmark` calls, and the final selected
+unit do not incur an extra wait. Keep the default for reviewer runs; set
+`FIG11_CASE_INTERVAL_SEC=<seconds>` to override it (`0` disables it for
+diagnostics).
+
+If the shared ARC host lock is temporarily busy, only the current canonical
+unit is retried, every 10 seconds for at most 300 seconds. The retry requires
+the benchmark runner's private lock-contention marker, so ordinary benchmark,
+setup, cleanup, and validation errors remain visible on stderr and are not
+retried. Configure the bounds with `FIG11_LOCK_RETRY_INTERVAL_SEC` and
+`FIG11_LOCK_RETRY_TIMEOUT_SEC`; timeout `0` disables automatic retry. On a
+timeout or interruption, repeat the command with `--resume` to preserve all
+valid completed results.
+
 The four methods can instead be run separately. This is useful for a staged
 review or for rerunning only one failed case:
 
@@ -54,9 +161,12 @@ bash sw/fig11/run_fig11_case.sh bc_tw adaptive --threshold 16
 ```
 
 `run_fig11_case.sh <workload> <method> [--threshold N] [options]` accepts
-`cxl`, `cache`, `cms`, or `adaptive`. The main runner additionally accepts
-`all` through either `--method` or `--case`; the automatic all-method wrapper
-is `run_fig11_all_yes.sh`. The case wrapper always skips the plot step.
+`cxl`, `cache`, `cms`, or `adaptive`; `adaptive` runs both epoch directions.
+Diagnostic selectors `adaptive_400000_400001` and
+`adaptive_400001_400000` run only one candidate, but cannot by themselves
+produce the final Adaptive bar. The main runner additionally accepts `all`
+through either `--method` or `--case`; the automatic all-method wrapper is
+`run_fig11_all_yes.sh`. The case wrapper always skips the plot step.
 
 `all yes` unconditionally accepts rerunning selected canonical cases. Existing
 output is moved to the next numbered `.bak` path before replacement. To
@@ -88,6 +198,23 @@ validates the existing canonical logs, computes the selected-sample and
 summary CSVs, and creates PNG/PDF without changing hardware or rerunning a
 benchmark.
 
+After `bc_tw`, `bfs_tw`, and `pr_tw` have all completed, generate one grouped
+figure with those three workloads and their cross-workload geometric mean:
+
+```bash
+env PYTHONNOUSERSITE=1 \
+  PYTHONPATH=/usr/lib/python3/dist-packages \
+  bash sw/fig11/plot_fig11_primary_combined.sh --threshold 16
+```
+
+The combined wrapper is processing-only. It first strictly validates the
+existing canonical runs and regenerates all three summary CSVs, without
+touching the FPGA or starting GAPBS. It then plots CXL-only, CHMU-Cache,
+CHMU-CMS, and Adaptive for each workload plus a `GeoMean` group. Each
+geometric-mean bar is computed from that method's three normalized-performance
+values. Adaptive first selects the faster epoch direction independently for
+each workload.
+
 If the system-package import fails, use a plotting-only virtual environment:
 
 ```bash
@@ -97,13 +224,20 @@ source "$HOME/.venvs/micro-2026-arc-plot/bin/activate"
 python3 -m pip install --upgrade pip
 python3 -m pip install -r sw/fig11/requirements.txt
 python3 -c 'import numpy, matplotlib; print(numpy.__version__, matplotlib.__version__)'
-bash sw/fig11/plot_fig11.sh bc_tw --threshold 16
+bash sw/fig11/plot_fig11_primary_combined.sh --threshold 16
 deactivate
 ```
 
-Each complete workload contains five GAPBS invocations per method. From every
-invocation the collector selects Trial Time 6--10, giving 25 samples per
-method, and plots the geometric-mean normalized performance:
+Each complete workload contains five GAPBS invocations for CXL-only,
+CHMU-Cache, and CHMU-CMS. Adaptive contains five invocations in each epoch
+direction, `400000/400001` and `400001/400000`. From every invocation the
+collector selects Trial Time 6--10, giving 25 samples per static method and 25
+samples per Adaptive direction. It computes the two Adaptive geometric means
+independently and uses the direction with the lower execution time for the
+single reported Adaptive bar. Both direction results remain in the manifest
+and selected-sample CSV for auditability.
+
+The plotted geometric-mean normalized performance is:
 
 ```text
 CXL-only geometric-mean time / method geometric-mean time
@@ -112,6 +246,9 @@ CXL-only geometric-mean time / method geometric-mean time
 Values above `1.0` are better. Results are stored below
 `results/figure11/th16/<workload>/` as raw-run manifests, selected-sample CSV,
 summary CSV, metadata, PNG, and PDF.
+
+The combined PNG/PDF are written as
+`results/figure11/th16/figure11_primary_combined_normalized_performance.{png,pdf}`.
 
 ## What is included
 
@@ -126,8 +263,8 @@ summary CSV, metadata, PNG, and PDF.
 | `sw/core_pqos` | Reproduces the SPR1 CPU offlining and LLC-way allocation | Benchmark run |
 | `sw/build_option_th{16,32,64,96}` | Reviewer entry points for the four runtime thresholds | Benchmark run |
 | `sw/benchmark` | Common GAPBS and SPEC runners | Benchmark run |
-| `sw/fig11` | Five-repeat runner, strict 25-sample collector, and Figure 11 plotter | Figure 11 |
-| `sw/fig11_spec` | Optional five-repeat SPEC four-bar runner and SPEC log collector | Optional extension |
+| `sw/fig11` | Five-repeat static and five-per-direction Adaptive runner, strict collector, and Figure 11 plotter | Figure 11 |
+| `sw/fig11_spec` | Optional five-repeat static and five-per-direction Adaptive SPEC four-bar runner and collector | Optional extension |
 | `sw/ml/pretrained` | Rank-1 GAPBS and SPEC cfgs for thresholds 16/32/64/96 | Adaptive run |
 | `sw/ml` | Optional 20-trial optimizer and suite-isolated LOBO generator | Optional training |
 
@@ -275,7 +412,8 @@ The commands in this section are diagnostic building blocks. Use
 `sw/fig11/run_fig11_th*.sh` for reported Figure 11 results because that path
 selects the correct pretrained cfg, checks that the manager actually loaded
 it, freezes a SHA-256-addressed cfg snapshot in the result directory, performs
-five repetitions, and applies the 25-sample metric.
+five repetitions per static method and per Adaptive direction, and applies the
+25-sample metric independently before selecting the better Adaptive direction.
 
 Each threshold directory contains the same five portable wrappers. Arguments
 are mandatory: benchmark is `bc`, `bfs`, `cc`, or `pr`; database is `web` or
@@ -300,12 +438,31 @@ CHMU_MODEL_PATH="$PWD/sw/ml/pretrained/th16/gap/bc_twitter.cfg" \
   ./sw/build_option_th16/run_test_indv_gap_400000_400001 bc twitter
 ```
 
+That command is the retained low-level forward-direction diagnostic wrapper.
+The reported Figure 11 orchestrator invokes the common runner directly for
+both epoch orders, executes five of each direction with the same cfg, and
+selects the lower 25-sample geometric-mean time for the single Adaptive bar.
+Use `sw/fig11/run_fig11_case.sh ... adaptive`, rather than inventing a reverse
+low-level wrapper name, to run both canonical candidates.
+
 Dynamic switching (`400000 != 400001`) is accepted only after both core and IMC
 `perf` collectors produce usable samples. Collector startup/runtime failure
 fails the manager and the benchmark command instead of silently changing the
 algorithm. `CHMU_ALLOW_PREDICTOR_FALLBACK=1` enables the old duplicate-policy
 fallback for debugging only; results from that override are not the reported
 dynamic configuration.
+
+On SPR1, AE4 uses the real perf executable that produced the original adaptive
+results:
+
+```bash
+/research/chihuns2/kernel/linux-6.5.5/tools/perf/perf --version
+```
+
+The path is set as `CHMU_PERF_BIN` in `sw/config/benchmark_paths.env` and may be
+overridden with another tested absolute `tools/perf/perf` path. Do not select
+`/usr/bin/perf`: on the custom `6.11.0-mig-offload+` kernel it is only an Ubuntu
+dispatcher and exits because no matching distro linux-tools package exists.
 
 The original convenience entry point is also retained for diagnosis; it runs
 Cache-only, CMS-only, and dynamic switching sequentially. Supply a matching
@@ -411,11 +568,16 @@ bash sw/run_figure11_benchmark.sh spec gcc --threshold 16 --skip-plot
 
 The same dispatcher accepts GAPBS, for example
 `bash sw/run_figure11_benchmark.sh gapbs bc_tw --threshold 16`. The optional
-SPEC path runs five complete invocations per method, selects the final anchored
-`total seconds elapsed` value from each invocation, computes a five-sample
-geometric mean, and plots `CXL-only time / method time`. This metric is kept
-separate from the reported GAPBS 25-value metric. Threshold-specific SPEC
-wrappers are under `sw/fig11_spec/run_fig11_spec_th{16,32,64,96}.sh`.
+SPEC path runs five complete invocations per static method and five for each
+Adaptive epoch direction. It selects the final anchored
+`total seconds elapsed` value from each invocation, computes each five-sample
+geometric mean, selects the faster Adaptive direction for the single Adaptive
+bar, and plots `CXL-only time / method time`. This metric is kept separate from
+the reported GAPBS 25-value metric. Threshold-specific SPEC wrappers are under
+`sw/fig11_spec/run_fig11_spec_th{16,32,64,96}.sh`.
+
+Its multiple invocations use the same 30-second newly-executed-unit interval,
+bounded lock-contention-only retry, and `--resume` behavior as the GAPBS path.
 
 After the optional SPEC data completes, regenerate its CSV and plot without
 running hardware by using the same plotting environment described above:

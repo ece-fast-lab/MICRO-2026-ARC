@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 FIG11_DIR = Path(__file__).resolve().parents[1]
@@ -18,7 +19,8 @@ from collect_results import (  # noqa: E402
     collect_results,
     parse_gapbs_log,
 )
-from plot_figure11 import load_results, make_plot  # noqa: E402
+from plot_figure11 import PlotRow, load_results, make_plot  # noqa: E402
+from plot_figure11 import plt  # noqa: E402
 
 
 class Figure11TestCase(unittest.TestCase):
@@ -76,7 +78,18 @@ class Figure11TestCase(unittest.TestCase):
             (1, "cxl", "CXL-only", 100.0),
             (2, "cache", "CHMU-Cache", 50.0),
             (3, "cms", "CHMU-CMS", 80.0),
-            (4, "adaptive", "Adaptive", 40.0),
+            (
+                4,
+                "adaptive_400000_400001",
+                "Adaptive 400000/400001",
+                40.0,
+            ),
+            (
+                5,
+                "adaptive_400001_400000",
+                "Adaptive 400001/400000",
+                60.0,
+            ),
         ]
 
 
@@ -132,7 +145,7 @@ class CollectionTests(Figure11TestCase):
             [row["method"] for row in summary_rows],
             ["cxl", "cache", "cms", "adaptive"],
         )
-        self.assertEqual(len(sample_rows), 100)
+        self.assertEqual(len(sample_rows), 125)
         self.assertTrue(
             all(int(row["selected_sample_count"]) == 25 for row in summary_rows)
         )
@@ -156,6 +169,46 @@ class CollectionTests(Figure11TestCase):
         self.assertAlmostEqual(
             float(by_method["adaptive"]["normalized_performance"]), 2.5
         )
+        self.assertEqual(
+            by_method["adaptive"]["selected_adaptive_direction"],
+            "adaptive_400000_400001",
+        )
+        self.assertAlmostEqual(
+            float(
+                by_method["adaptive"][
+                    "adaptive_400000_400001_geomean_seconds"
+                ]
+            ),
+            40.0,
+        )
+        self.assertAlmostEqual(
+            float(
+                by_method["adaptive"][
+                    "adaptive_400001_400000_geomean_seconds"
+                ]
+            ),
+            60.0,
+        )
+        adaptive_samples = [
+            row for row in sample_rows if row["method"].startswith("adaptive_")
+        ]
+        self.assertEqual(len(adaptive_samples), 50)
+        self.assertEqual(
+            {
+                row["method"]
+                for row in adaptive_samples
+                if row["selected_for_adaptive_bar"] == "yes"
+            },
+            {"adaptive_400000_400001"},
+        )
+        self.assertEqual(
+            {
+                row["method"]
+                for row in adaptive_samples
+                if row["selected_for_adaptive_bar"] == "no"
+            },
+            {"adaptive_400001_400000"},
+        )
 
     def test_geomean_is_over_all_twenty_five_selected_samples(self) -> None:
         methods = self.default_methods()
@@ -172,9 +225,70 @@ class CollectionTests(Figure11TestCase):
         expected = math.exp(sum(math.log(value) for value in cxl_values) / 5)
         self.assertAlmostEqual(float(rows["cxl"]["geomean_seconds"]), expected)
 
+    def test_reverse_adaptive_direction_wins_when_its_geomean_is_lower(self) -> None:
+        methods = self.default_methods()
+        methods[-2] = (
+            4,
+            "adaptive_400000_400001",
+            "Adaptive 400000/400001",
+            70.0,
+        )
+        methods[-1] = (
+            5,
+            "adaptive_400001_400000",
+            "Adaptive 400001/400000",
+            35.0,
+        )
+        manifest = self.build_manifest(methods)
+        summary = self.root / "summary.csv"
+        samples = self.root / "samples.csv"
+        collect_results(manifest, summary, samples)
+
+        with summary.open("r", encoding="utf-8", newline="") as summary_file:
+            adaptive = next(
+                row for row in csv.DictReader(summary_file)
+                if row["method"] == "adaptive"
+            )
+        self.assertEqual(
+            adaptive["selected_adaptive_direction"],
+            "adaptive_400001_400000",
+        )
+        self.assertAlmostEqual(float(adaptive["geomean_seconds"]), 35.0)
+        self.assertAlmostEqual(float(adaptive["normalized_performance"]), 100 / 35)
+
+        with samples.open("r", encoding="utf-8", newline="") as samples_file:
+            sample_rows = list(csv.DictReader(samples_file))
+        chosen = {
+            row["method"]
+            for row in sample_rows
+            if row["selected_for_adaptive_bar"] == "yes"
+        }
+        self.assertEqual(chosen, {"adaptive_400001_400000"})
+
+    def test_adaptive_tie_deterministically_selects_forward_direction(self) -> None:
+        methods = self.default_methods()
+        methods[-1] = (
+            5,
+            "adaptive_400001_400000",
+            "Adaptive 400001/400000",
+            40.0,
+        )
+        manifest = self.build_manifest(methods)
+        summary = self.root / "summary.csv"
+        collect_results(manifest, summary, self.root / "samples.csv")
+        with summary.open("r", encoding="utf-8", newline="") as summary_file:
+            adaptive = next(
+                row for row in csv.DictReader(summary_file)
+                if row["method"] == "adaptive"
+            )
+        self.assertEqual(
+            adaptive["selected_adaptive_direction"],
+            "adaptive_400000_400001",
+        )
+
     def test_rejects_missing_repeat(self) -> None:
         manifest = self.build_manifest(
-            self.default_methods(), omit=("adaptive", 5)
+            self.default_methods(), omit=("adaptive_400001_400000", 5)
         )
         with self.assertRaisesRegex(CollectionError, "repeats 1..5"):
             collect_results(manifest, self.root / "summary.csv", self.root / "samples.csv")
@@ -196,12 +310,76 @@ class CollectionTests(Figure11TestCase):
         collect_results(manifest, summary, self.root / "samples.csv")
 
         rows = load_results(summary)
-        self.assertEqual([row.method for row in rows], [item[1] for item in methods])
+        self.assertEqual(
+            [row.method for row in rows],
+            ["local", "cxl", "cache", "cms", "adaptive"],
+        )
         png_path, pdf_path = make_plot(
             rows, self.root / "figure11", "Synthetic Figure 11", 72
         )
         self.assertGreater(png_path.stat().st_size, 0)
         self.assertGreater(pdf_path.stat().st_size, 0)
+
+
+class PlotLayoutTests(unittest.TestCase):
+    @staticmethod
+    def rows() -> list[PlotRow]:
+        return [
+            PlotRow(1, "local", "Local-only", 1.40),
+            PlotRow(2, "cxl", "CXL-only", 1.00),
+            PlotRow(3, "cache", "CHMU-Cache", 1.25),
+            PlotRow(4, "cms", "CHMU-CMS", 1.30),
+            PlotRow(5, "adaptive", "Adaptive", 1.50),
+        ]
+
+    def test_title_legend_and_axes_have_separate_vertical_regions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            with patch.object(plt, "close") as mocked_close:
+                png_path, pdf_path = make_plot(
+                    self.rows(),
+                    Path(temporary_directory) / "figure11_layout",
+                    "Figure 11: GAPBS pr (twitter), threshold 16",
+                    72,
+                )
+                figure = plt.gcf()
+                mocked_close.assert_called_once_with(figure)
+
+            try:
+                self.assertGreater(png_path.stat().st_size, 0)
+                self.assertGreater(pdf_path.stat().st_size, 0)
+                figure.canvas.draw()
+                renderer = figure.canvas.get_renderer()
+                self.assertIsNotNone(figure._suptitle)
+                self.assertEqual(len(figure.legends), 1)
+                title_box = figure._suptitle.get_window_extent(renderer)
+                legend_box = figure.legends[0].get_window_extent(renderer)
+                axes_box = figure.axes[0].get_window_extent(renderer)
+                self.assertFalse(title_box.overlaps(legend_box))
+                self.assertFalse(legend_box.overlaps(axes_box))
+            finally:
+                plt.close(figure)
+
+    def test_legend_stays_clear_of_axes_without_title(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            with patch.object(plt, "close"):
+                make_plot(
+                    self.rows()[1:],
+                    Path(temporary_directory) / "figure11_no_title",
+                    None,
+                    72,
+                )
+                figure = plt.gcf()
+
+            try:
+                figure.canvas.draw()
+                renderer = figure.canvas.get_renderer()
+                self.assertIsNone(figure._suptitle)
+                self.assertEqual(len(figure.legends), 1)
+                legend_box = figure.legends[0].get_window_extent(renderer)
+                axes_box = figure.axes[0].get_window_extent(renderer)
+                self.assertFalse(legend_box.overlaps(axes_box))
+            finally:
+                plt.close(figure)
 
 
 if __name__ == "__main__":

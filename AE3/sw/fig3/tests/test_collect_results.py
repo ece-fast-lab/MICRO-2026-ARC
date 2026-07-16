@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 FIG3_DIR = Path(__file__).resolve().parents[1]
@@ -19,7 +20,7 @@ from collect_results import (  # noqa: E402
     parse_gapbs_log,
     parse_spec_log,
 )
-from plot_figure3 import load_results, make_plot  # noqa: E402
+from plot_figure3 import PlotRow, load_results, make_plot, plt  # noqa: E402
 
 
 class LogParserTests(unittest.TestCase):
@@ -147,6 +148,47 @@ class CollectionTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(CollectionError, "exactly one baseline"):
             collect_results("gapbs", manifest, self.root / "out.csv")
+
+
+class PlotLayoutTests(unittest.TestCase):
+    def test_title_legend_and_axes_have_separate_vertical_regions(self) -> None:
+        rows = [
+            PlotRow(1, "Baseline", "baseline", 16, 1.00),
+            PlotRow(2, "ANB", "anb", 16, 1.10),
+            PlotRow(3, "DAMON", "damon", 16, 1.20),
+            PlotRow(4, "Cache-16", "cache", 16, 1.30),
+            PlotRow(5, "Cache-32", "cache", 32, 1.40),
+            PlotRow(6, "Cache-64", "cache", 64, 1.50),
+            PlotRow(7, "Cache-96", "cache", 96, 1.60),
+            PlotRow(8, "CMS-16", "cms", 16, 1.70),
+            PlotRow(9, "CMS-32", "cms", 32, 1.80),
+            PlotRow(10, "CMS-64", "cms", 64, 1.90),
+            PlotRow(11, "CMS-96", "cms", 96, 2.00),
+        ]
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            with patch.object(plt, "close") as mocked_close:
+                make_plot(
+                    rows,
+                    Path(temporary_directory) / "figure3_layout",
+                    "Figure 3: GAPBS pr (twitter)",
+                    72,
+                )
+                figure = plt.gcf()
+                mocked_close.assert_called_once_with(figure)
+
+            try:
+                figure.canvas.draw()
+                renderer = figure.canvas.get_renderer()
+                self.assertIsNotNone(figure._suptitle)
+                self.assertEqual(len(figure.legends), 1)
+                title_box = figure._suptitle.get_window_extent(renderer)
+                legend_box = figure.legends[0].get_window_extent(renderer)
+                axes_box = figure.axes[0].get_window_extent(renderer)
+                self.assertFalse(title_box.overlaps(legend_box))
+                self.assertFalse(legend_box.overlaps(axes_box))
+            finally:
+                plt.close(figure)
 
 
 if __name__ == "__main__":

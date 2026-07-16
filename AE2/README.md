@@ -1,10 +1,113 @@
-# MICRO 2026 ARC Artifact Evaluation: SPR1 setup and benchmarks
+# AE2 – Memory Usage and Migration Traffic (Figure 4)
 
-This directory is the portable SPR1 package for reproducing the CHMU
-migration environment and running the GAPBS/SPEC CPU2017 experiments. All
-artifact-local paths are derived from the Git clone. Only the separately
-installed benchmark suites, graph datasets, and FPGA programming tool use
-host-specific absolute paths.
+AE2 runs SPEC CPU2017 `gcc` with CHMU-Cache at thresholds 32 and 96 and plots
+Local-memory usage, CXL-memory usage, and migration traffic over time. This
+front section is the complete reviewer path. Detailed setup internals,
+low-level runners, and recovery notes are preserved in the
+[Appendix](#appendix-detailed-reference).
+
+## Artifact at a glance
+
+| Item | Reviewer path |
+|---|---|
+| Target | Figure 4, `gcc`, thresholds 32 and 96 |
+| FPGA image | `chmu_ae_merge_SPL1` |
+| Long-running step | Two benchmark/data-collection runs |
+| Plotting | A separate processing-only step after both runs |
+| Main output | `memory_usage_migration_traffic.{png,pdf}` |
+
+## Quick start
+
+Run commands from the normal reviewer account. Do not use `sudo -i` and do
+not put `sudo` in front of an entire setup or benchmark command. The scripts
+request privilege only for the host controls that need it.
+
+### 1. Program the SPL1 FPGA image
+
+On the FPGA programming server:
+
+```bash
+cd MICRO-2026-ARC/AE2
+unzip -o program_script/chmu_ae_merge_SPL1.zip -d program_script
+bash program_script/update_cdf_paths.sh
+bash program_script/program_spr1.sh chmu_ae_merge_SPL1.cdf
+```
+
+Use the power-cycle command supplied separately by the authorized system
+operator. BMC credentials are intentionally not included in this artifact.
+Wait for SPR1 to boot, reconnect to it, and continue only after the custom
+kernel and two NUMA nodes are visible.
+
+```bash
+uname -r
+numactl -H
+```
+
+Expected kernel: `6.11.0-mig-offload+`.
+
+### 2. Check the external benchmark paths
+
+SPEC CPU2017 is not redistributed. On SPR1, verify `SPEC_ROOT`, `SPEC_RUNCPU`,
+and `SPEC_CONFIG` in:
+
+```text
+AE2/sw/config/benchmark_paths.env
+```
+
+### 3. Configure SPR1
+
+```bash
+cd MICRO-2026-ARC/AE2
+bash set_default/setup_default.sh all
+```
+
+The setup detects the PCI BAR and NUMA topology, reuses the bundled kernel
+modules, builds the four threshold managers, and applies the CPU/NUMA/CHMU
+defaults. It does not start a benchmark.
+
+### 4. Collect Figure 4 data
+
+Plotting is deliberately skipped during the long-running measurements:
+
+```bash
+cd MICRO-2026-ARC/AE2
+./sw/build_option_th32/run_fig4_th32.sh all yes --skip-plot
+./sw/build_option_th96/run_fig4_th96.sh all yes --skip-plot
+```
+
+If a selected canonical output already exists, the noninteractive command
+backs it up before rerunning it.
+
+### 5. Generate the two plots from existing data
+
+These commands do not rerun `gcc` or change FPGA state:
+
+```bash
+cd MICRO-2026-ARC/AE2
+
+env PYTHONNOUSERSITE=1 \
+  PYTHONPATH=/usr/lib/python3/dist-packages \
+  ./sw/build_option_th32/run_fig4_th32.sh --skip-benchmark --yes
+
+env PYTHONNOUSERSITE=1 \
+  PYTHONPATH=/usr/lib/python3/dist-packages \
+  ./sw/build_option_th96/run_fig4_th96.sh --skip-benchmark --yes
+```
+
+## Expected output
+
+Each threshold writes its raw monitor log, converted CSV-like text, and plot
+below its canonical run directory:
+
+```text
+sw/build_option_th32/output/<run-directory>/memory_usage_migration_traffic.png
+sw/build_option_th96/output/<run-directory>/memory_usage_migration_traffic.png
+```
+
+The corresponding PDF files are written beside the PNG files. Threshold 32
+should show more frequent migration traffic than threshold 96.
+
+# Appendix: Detailed reference
 
 ## What is included
 

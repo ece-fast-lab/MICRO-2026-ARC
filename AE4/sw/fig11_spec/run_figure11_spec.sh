@@ -14,15 +14,18 @@ Usage:
   run_figure11_spec.sh <gcc|mcf|cactuB|cam4|roms> [options]
 
 Run the optional Figure-11-style comparison for one restricted SPEC CPU 2017
-benchmark. Each method is invoked five complete times. The final anchored
-"; <seconds> total seconds elapsed" value from each invocation is used, and
-the plot reports CXL-only geometric-mean time / method geometric-mean time.
+benchmark. Each fixed method and each adaptive direction is invoked five
+complete times. The final anchored "; <seconds> total seconds elapsed" value
+from each invocation is used. The faster of the two complete adaptive
+candidates is reported as the single Adaptive bar, and the plot reports
+CXL-only geometric-mean time / method geometric-mean time.
 
 Methods:
   CXL-only       no migration, Node 1 only
   CHMU-Cache     static 400000/400000
   CHMU-CMS       static 400001/400001
-  Adaptive       supplied SPEC LOBO cfg, 400000/400001
+  Adaptive       supplied SPEC LOBO cfg; compare 400000/400001 and
+                 400001/400000, then report the faster complete direction
 
 Options:
   --threshold <16|32|64|96>  Runtime CHMU threshold (default: 16)
@@ -33,11 +36,24 @@ Options:
                              plot unless --skip-plot is added
   --skip-plot                Run/validate benchmarks and, once the full sweep
                              exists, collect CSV without importing Matplotlib
-  --method, --case <name>    Run only all, cxl, cache, cms, or adaptive
+  --method, --case <name>    Run only all, cxl, cache, cms, or adaptive;
+                             adaptive runs both epoch directions. Advanced
+                             selectors adaptive_400000_400001 and
+                             adaptive_400001_400000 run one direction only
                              (local additionally requires --include-local)
   --include-local            Add optional Local-only; running requires
                              CONFIRM_LOCAL_MEMMAP=YES after a memory-map reboot
   -h, --help                 Show this help
+
+Environment:
+  FIG11_CASE_INTERVAL_SEC    Delay between newly executed canonical units
+                             (default: 30; use 0 to disable)
+  FIG11_LOCK_RETRY_INTERVAL_SEC
+                             Delay between retries when the shared ARC host
+                             lock is temporarily busy (default: 10)
+  FIG11_LOCK_RETRY_TIMEOUT_SEC
+                             Maximum total lock-retry wait for one unit
+                             (default: 300; use 0 to disable automatic retry)
 
 This is an optional extension; the reviewer Figure 11 path remains GAPBS.
 This script never programs a POF or reboots SPR1.
@@ -65,6 +81,9 @@ skip_benchmark=0
 skip_plot=0
 include_local=0
 selected_method=all
+FIG11_CASE_INTERVAL_SEC="${FIG11_CASE_INTERVAL_SEC:-30}"
+FIG11_LOCK_RETRY_INTERVAL_SEC="${FIG11_LOCK_RETRY_INTERVAL_SEC:-10}"
+FIG11_LOCK_RETRY_TIMEOUT_SEC="${FIG11_LOCK_RETRY_TIMEOUT_SEC:-300}"
 while (( $# > 0 )); do
     case "$1" in
         --threshold)
@@ -94,16 +113,22 @@ esac
 (( resume == 0 || skip_benchmark == 0 )) || \
     ae_die "--resume and --skip-benchmark are mutually exclusive"
 case "$selected_method" in
-    all|cxl|cache|cms|adaptive) ;;
+    all|cxl|cache|cms|adaptive|adaptive_400000_400001|adaptive_400001_400000) ;;
     local)
         (( include_local == 1 )) || \
             ae_die "--method local requires --include-local and CONFIRM_LOCAL_MEMMAP=YES when running"
         ;;
-    *) ae_die "--method/--case must be one of: all, cxl, cache, cms, adaptive, local" ;;
+    *) ae_die "--method/--case must be one of: all, cxl, cache, cms, adaptive, adaptive_400000_400001, adaptive_400001_400000, local" ;;
 esac
 if (( skip_benchmark == 1 )) && [[ "$selected_method" != all ]]; then
     ae_die "--skip-benchmark processes the complete sweep and therefore requires --method all"
 fi
+[[ "$FIG11_CASE_INTERVAL_SEC" =~ ^[0-9]+$ ]] || \
+    ae_die "FIG11_CASE_INTERVAL_SEC must be a non-negative integer"
+[[ "$FIG11_LOCK_RETRY_INTERVAL_SEC" =~ ^[1-9][0-9]*$ ]] || \
+    ae_die "FIG11_LOCK_RETRY_INTERVAL_SEC must be a positive integer"
+[[ "$FIG11_LOCK_RETRY_TIMEOUT_SEC" =~ ^[0-9]+$ ]] || \
+    ae_die "FIG11_LOCK_RETRY_TIMEOUT_SEC must be a non-negative integer"
 CHMU_SPEC_COPIES="${CHMU_SPEC_COPIES:-8}"
 [[ "$CHMU_SPEC_COPIES" =~ ^[1-9][0-9]*$ ]] || \
     ae_die "CHMU_SPEC_COPIES must be a positive decimal integer"
@@ -152,8 +177,14 @@ fi
 chmod 0444 "$model_cfg"
 ae_validate_model_cfg "$model_cfg" "$workload_key"
 
-methods=(cxl cache cms adaptive)
-labels=("CXL-only" "CHMU-Cache" "CHMU-CMS" "Adaptive")
+methods=(cxl cache cms adaptive_400000_400001 adaptive_400001_400000)
+labels=(
+    "CXL-only"
+    "CHMU-Cache"
+    "CHMU-CMS"
+    "Adaptive (400000/400001)"
+    "Adaptive (400001/400000)"
+)
 if (( include_local == 1 )); then
     methods=(local "${methods[@]}")
     labels=("Local-only" "${labels[@]}")
@@ -164,8 +195,9 @@ printf '  workload       : %s (SPEC %s)\n' "$display_name" "$workload_key"
 printf '  threshold      : %s\n' "$threshold"
 printf '  methods        : %s\n' "${labels[*]}"
 printf '  selected case  : %s\n' "$selected_method"
-printf '  repetitions    : 5 complete SPEC invocations per method\n'
-printf '  selected data  : final total-seconds record per invocation (5 samples/method)\n'
+printf '  repetitions    : 5 complete SPEC invocations per fixed method and adaptive direction\n'
+printf '  selected data  : final total-seconds record per invocation (5 samples/candidate)\n'
+printf '  adaptive bar   : faster complete direction by 5-sample geometric-mean time\n'
 printf '  plot metric    : CXL-only time / method time (higher is better)\n'
 printf '  SPEC copies    : %s\n' "$CHMU_SPEC_COPIES"
 printf '  supplied cfg   : %s\n' "$pretrained_model_cfg"
@@ -197,6 +229,11 @@ if (( skip_benchmark == 0 )); then
         ae_die "SPEC_RUNCPU is not executable: ${SPEC_RUNCPU:-unset}"
     [[ -r "${SPEC_CONFIG:-}" ]] || \
         ae_die "SPEC_CONFIG is not readable: ${SPEC_CONFIG:-unset}"
+    if [[ "$selected_method" == all || "$selected_method" == adaptive ||
+          "$selected_method" == adaptive_400000_400001 ||
+          "$selected_method" == adaptive_400001_400000 ]]; then
+        ae_validate_perf_binary "${CHMU_PERF_BIN:-}"
+    fi
 
     if (( include_local == 1 )); then
         [[ "${CONFIRM_LOCAL_MEMMAP:-}" == YES ]] || \
@@ -234,7 +271,16 @@ set_point() {
             POINT_EPOCH_A=400001
             POINT_EPOCH_B=400001
             ;;
-        adaptive) ;;
+        adaptive_400000_400001)
+            # Preserve the original forward-direction canonical path so that
+            # --resume can reuse valid 400000/400001 repetitions.
+            POINT_TAG="fig11spec_adaptive_rep${repeat_tag}"
+            ;;
+        adaptive_400001_400000)
+            POINT_EPOCH_A=400001
+            POINT_EPOCH_B=400000
+            POINT_TAG="fig11spec_adaptive_400001_400000_rep${repeat_tag}"
+            ;;
         *) ae_die "internal unsupported method: $method" ;;
     esac
     POINT_RUN_DIR="${out_base}/${threshold}_${POINT_EPOCH_A}_${POINT_EPOCH_B}_1_${benchmark}_${POINT_MODE}_${POINT_TAG}"
@@ -256,7 +302,8 @@ point_valid() {
     grep -Fqx \
         "mode=${POINT_MODE} spec=${benchmark} copies=${CHMU_SPEC_COPIES}" \
         "${POINT_RUN_DIR}/runtime_summary.txt" || return 1
-    if [[ "$POINT_METHOD" == adaptive ]]; then
+    if [[ "$POINT_METHOD" == adaptive_400000_400001 ||
+          "$POINT_METHOD" == adaptive_400001_400000 ]]; then
         [[ "$(sha256sum "$model_cfg" | awk '{print $1}')" == "$model_cfg_sha256" ]] || \
             return 1
         ae_adaptive_manager_log_valid "$POINT_RUN_DIR" "$model_cfg" \
@@ -285,6 +332,7 @@ run_point() {
     local total_points="${#methods[@]}"
     local extra_env=()
 
+    POINT_EXECUTED=0
     set_point "$method" "$repeat"
     if (( skip_benchmark == 1 )); then
         point_valid || \
@@ -329,7 +377,7 @@ run_point() {
         cache|cms)
             extra_env=(SRC_NODE="$CXL_NODE" DST_NODE="$BUFFER_NODE" CHMU_MODEL_PATH=)
             ;;
-        adaptive)
+        adaptive_400000_400001|adaptive_400001_400000)
             extra_env=(
                 SRC_NODE="$CXL_NODE" DST_NODE="$BUFFER_NODE"
                 CHMU_MODEL_PATH="$model_cfg"
@@ -339,21 +387,51 @@ run_point() {
             ;;
     esac
 
-    ae_run_spec_point "$SW_DIR" "$out_base" "$threshold" \
+    ae_run_with_arc_lock_retry \
+        "$FIG11_LOCK_RETRY_INTERVAL_SEC" "$FIG11_LOCK_RETRY_TIMEOUT_SEC" \
+        ae_run_spec_point "$SW_DIR" "$out_base" "$threshold" \
         "$POINT_EPOCH_A" "$POINT_EPOCH_B" "$benchmark" \
         "$POINT_MODE" "$POINT_TAG" "${extra_env[@]}"
     point_valid || \
         ae_die "runner returned success but SPEC output validation failed: $POINT_RUN_DIR"
+    POINT_EXECUTED=1
 }
 
+method_selected() {
+    local method="$1"
+    case "$selected_method" in
+        all) return 0 ;;
+        adaptive)
+            [[ "$method" == adaptive_400000_400001 ||
+               "$method" == adaptive_400001_400000 ]]
+            ;;
+        *) [[ "$method" == "$selected_method" ]] ;;
+    esac
+}
+
+if [[ "$selected_method" == all ]]; then
+    selected_unit_total=$((5 * ${#methods[@]}))
+elif [[ "$selected_method" == adaptive ]]; then
+    selected_unit_total=10
+else
+    selected_unit_total=5
+fi
+selected_unit_index=0
 for repeat in 1 2 3 4 5; do
     for method_index in "${!methods[@]}"; do
-        if [[ "$selected_method" != all && \
-              "${methods[$method_index]}" != "$selected_method" ]]; then
+        if ! method_selected "${methods[$method_index]}"; then
             continue
         fi
+        selected_unit_index=$((selected_unit_index + 1))
         run_point "$((method_index + 1))" "$repeat" \
             "${methods[$method_index]}" "${labels[$method_index]}"
+        if (( POINT_EXECUTED == 1 && \
+              selected_unit_index < selected_unit_total && \
+              FIG11_CASE_INTERVAL_SEC > 0 )); then
+            printf '[interval] Waiting %s seconds before the next optional SPEC canonical unit.\n' \
+                "$FIG11_CASE_INTERVAL_SEC"
+            sleep "$FIG11_CASE_INTERVAL_SEC"
+        fi
     done
 done
 
@@ -381,7 +459,7 @@ else
     printf '[1/3] All optional SPEC invocations completed or were reused.\n'
 fi
 
-printf '[2/3] Select each invocation final total-seconds record and compute 5-sample geometric means.\n'
+printf '[2/3] Select final total-seconds records, compute candidate geometric means, and select the faster adaptive direction.\n'
 python3 "${SCRIPT_DIR}/collect_spec_results.py" \
     --manifest "$manifest" \
     --summary-output "$summary_csv" \
@@ -413,12 +491,15 @@ fi
     else
         printf 'pof_confirmation=reviewer_confirmed_before_run\n'
     fi
-    printf 'copies=%s\nrepetitions_per_method=5\n' "$CHMU_SPEC_COPIES"
+    printf 'copies=%s\nrepetitions_per_fixed_method=5\nadaptive_repetitions_per_direction=5\n' "$CHMU_SPEC_COPIES"
     printf 'selected_runtime=final_anchored_total_seconds_elapsed_per_invocation\n'
     printf 'selected_samples_per_method=5\n'
     printf 'baseline=cxl_only_no_migration\n'
     printf 'normalized_performance=cxl_geomean_seconds/method_geomean_seconds\n'
-    printf 'adaptive_epoch_a=400000\nadaptive_epoch_b=400001\npredictor_interval_ms=10\n'
+    printf 'adaptive_candidate_directions=400000/400001,400001/400000\n'
+    printf 'adaptive_forward_epoch_a=400000\nadaptive_forward_epoch_b=400001\n'
+    printf 'adaptive_reverse_epoch_a=400001\nadaptive_reverse_epoch_b=400000\n'
+    printf 'adaptive_selection=lower_5_sample_geomean_seconds\npredictor_interval_ms=10\n'
     printf 'adaptive_cfg_source=%s\n' "$pretrained_model_cfg"
     printf 'adaptive_cfg_snapshot=%s\n' "$model_cfg"
     printf 'adaptive_cfg_sha256=%s\n' "$model_cfg_sha256"

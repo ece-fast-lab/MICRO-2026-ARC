@@ -1,10 +1,106 @@
-# MICRO 2026 ARC Artifact Evaluation: SPR1 setup and benchmarks
+# AE3 – Page-Migration Performance Comparison (Figure 3)
 
-This directory is the portable SPR1 package for reproducing the CHMU
-migration environment and running the GAPBS/SPEC CPU2017 experiments. All
-artifact-local paths are derived from the Git clone. Only the separately
-installed benchmark suites, graph datasets, and FPGA programming tool use
-host-specific absolute paths.
+AE3 reproduces the primary Figure 3 comparison with GAPBS `pr_tw`: Baseline,
+ANB, DAMON, CHMU-Cache, and CHMU-CMS. This front section is the complete
+reviewer path. Optional workloads, Figures 6/8, low-level commands, and setup
+internals are preserved in the [Appendix](#appendix-detailed-reference).
+
+## Artifact at a glance
+
+| Item | Reviewer path |
+|---|---|
+| Target | Figure 3 with `pr_tw` |
+| FPGA image | `chmu_ae_merge_SPL1` |
+| Cases | Baseline, ANB, DAMON, Cache/CMS at thresholds 16/32/64/96 |
+| Long-running step | One automatic 11-case sweep |
+| Main output | `figure3_normalized_performance.{png,pdf}` |
+
+## Quick start
+
+Run commands from the normal reviewer account. Do not use `sudo -i` and do
+not put `sudo` in front of an entire setup or benchmark command. NumPy and
+Matplotlib are needed only for the final plot, not for data collection.
+
+### 1. Program the SPL1 FPGA image
+
+On the FPGA programming server:
+
+```bash
+cd MICRO-2026-ARC/AE3
+unzip -o program_script/chmu_ae_merge_SPL1.zip -d program_script
+bash program_script/update_cdf_paths.sh
+bash program_script/program_spr1.sh chmu_ae_merge_SPL1.cdf
+```
+
+Use the power-cycle command supplied separately by the authorized system
+operator. BMC credentials are intentionally not included in this artifact.
+Wait for SPR1 to boot, reconnect, and verify the custom kernel and NUMA nodes:
+
+```bash
+uname -r
+numactl -H
+```
+
+Expected kernel: `6.11.0-mig-offload+`.
+
+### 2. Check the external benchmark paths
+
+On SPR1, verify the GAPBS binaries, Twitter graph, and existing DAMO paths in:
+
+```text
+AE3/sw/config/benchmark_paths.env
+```
+
+ANB is supplied by the SPR1 kernel. DAMON uses the `damo` installation already
+configured on SPR1.
+
+### 3. Configure SPR1
+
+```bash
+cd MICRO-2026-ARC/AE3
+bash set_default/setup_default.sh all
+```
+
+### 4. Collect the primary Figure 3 data
+
+The wrapper accepts all prompts, inserts the required 30-second case interval,
+collects the result CSV, and skips plotting:
+
+```bash
+cd MICRO-2026-ARC/AE3
+bash sw/fig3/run_fig3_all_yes.sh
+```
+
+After an interruption, preserve completed cases and run only missing ones:
+
+```bash
+bash sw/fig3/run_fig3_all_yes.sh --resume
+```
+
+### 5. Plot from existing data
+
+This processing-only command does not run GAPBS or change FPGA state:
+
+```bash
+cd MICRO-2026-ARC/AE3
+env PYTHONNOUSERSITE=1 \
+  PYTHONPATH=/usr/lib/python3/dist-packages \
+  bash sw/fig3/plot_fig3.sh pr_tw
+```
+
+## Expected output
+
+```text
+results/figure3/gapbs/pr_twitter/figure3_results.csv
+results/figure3/gapbs/pr_twitter/figure3_normalized_performance.png
+results/figure3/gapbs/pr_twitter/figure3_normalized_performance.pdf
+```
+
+The plot reports `Baseline time / method time`; values above `1.0` are better.
+For a more detailed step-by-step description, see
+[`FIGURE3_REPRODUCTION.md`](FIGURE3_REPRODUCTION.md).
+
+# Appendix: Detailed reference
 
 ## What is included
 
@@ -195,11 +291,23 @@ bash set_default/setup_default.sh all
 The convenience command below defaults to `pr_tw`, accepts every benchmark
 confirmation, runs all eleven Figure 3 cases, validates the logs, and writes
 the result CSV. It deliberately skips PNG/PDF generation so the long hardware
-run is independent of the current Python plotting environment.
+run is independent of the current Python plotting environment. Newly executed
+cases are separated by 30 seconds so the previous runner's cleanup and
+asynchronous logging settle before the next case starts.
 
 ```bash
 bash sw/fig3/run_fig3_all_yes.sh
 ```
+
+The interval can be overridden for diagnosis with
+`FIG3_CASE_INTERVAL_SEC=<seconds>`; keep the default for reviewer runs.
+If the shared ARC host lock remains busy, the driver automatically retries
+only that exact lock-contention error every 10 seconds for at most 300 seconds
+per case. Completed cases are preserved; other failures still stop the sweep.
+The retry interval and bound can be changed with
+`FIG3_LOCK_RETRY_INTERVAL_SEC=<seconds>` and
+`FIG3_LOCK_RETRY_TIMEOUT_SEC=<seconds>` (`0` timeout disables retry). If the
+bound expires, rerun with `--resume` after the other ARC command exits.
 
 The equivalent interactive and explicit automatic commands are:
 

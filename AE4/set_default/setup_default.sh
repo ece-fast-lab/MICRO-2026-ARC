@@ -7,16 +7,19 @@ ARTIFACT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 ARTIFACT_NAME="${ARTIFACT_DIR##*/}"
 SW_DIR="${ARTIFACT_DIR}/sw"
 DEFAULT_CONFIG_FILE="${DEFAULT_CONFIG_FILE:-${SCRIPT_DIR}/config/defaults.env}"
+BENCHMARK_PATHS_FILE="${BENCHMARK_PATHS_FILE:-${SW_DIR}/config/benchmark_paths.env}"
 GENERATED_DIR="${SCRIPT_DIR}/generated"
 PLATFORM_CONFIG_FILE="${PLATFORM_CONFIG_FILE:-${GENERATED_DIR}/platform.env}"
 BUILD_CONFIG_FILE="${BUILD_CONFIG_FILE:-${GENERATED_DIR}/build.env}"
 KERNEL_BUILD="${KERNEL_BUILD:-/lib/modules/$(uname -r)/build}"
 ARC_LOCK_FILE="${ARC_LOCK_FILE:-/run/lock/micro_2026_arc.lock}"
-export DEFAULT_CONFIG_FILE PLATFORM_CONFIG_FILE BUILD_CONFIG_FILE ARC_LOCK_FILE
+export DEFAULT_CONFIG_FILE BENCHMARK_PATHS_FILE PLATFORM_CONFIG_FILE BUILD_CONFIG_FILE ARC_LOCK_FILE
 PREFLIGHT_COMPLETE=0
 
 # shellcheck source=config/defaults.env
 source "${DEFAULT_CONFIG_FILE}"
+# shellcheck source=/dev/null
+source "${BENCHMARK_PATHS_FILE}"
 
 usage() {
     cat <<'EOF'
@@ -205,7 +208,7 @@ check_requirements() {
     local missing=0
     local command_name
     local required_commands=(
-        bash cmake make gcc g++ lspci setpci numactl taskset perf
+        bash cmake make gcc g++ lspci setpci numactl taskset
         rdmsr wrmsr pqos modprobe modinfo insmod rmmod swapoff swapon
         flock ldconfig sha256sum pgrep pkill readlink mktemp
     )
@@ -217,6 +220,7 @@ check_requirements() {
     local available_governors
     local cpu_dir
     local offline_governor_cpus=""
+    local perf_version_output
     local -a required_cmdline=(
         'intel_iommu=on,sm_on'
         'iommu=pt'
@@ -238,6 +242,19 @@ check_requirements() {
             printf '  OK       %s\n' "${command_name}"
         fi
     done
+
+    if [[ "${CHMU_PERF_BIN:-}" != /* || ! -x "${CHMU_PERF_BIN:-}" ]]; then
+        warn "AE4 adaptive perf binary is missing or not executable: ${CHMU_PERF_BIN:-unset}"
+        warn "set CHMU_PERF_BIN to the real tools/perf/perf executable; do not use the Ubuntu /usr/bin/perf dispatcher"
+        missing=1
+    elif ! perf_version_output="$("${CHMU_PERF_BIN}" --version 2>&1)"; then
+        warn "AE4 adaptive perf binary cannot run: ${CHMU_PERF_BIN}"
+        [[ -z "${perf_version_output}" ]] || printf '           %s\n' "${perf_version_output//$'\n'/ }" >&2
+        missing=1
+    else
+        printf '  OK       adaptive perf: %s (%s)\n' \
+            "${CHMU_PERF_BIN}" "${perf_version_output//$'\n'/ }"
+    fi
 
     actual_kernel="$(uname -r)"
     if [[ "${actual_kernel}" != "${EXPECTED_KERNEL_RELEASE}" ]]; then

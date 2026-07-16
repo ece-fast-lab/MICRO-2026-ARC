@@ -155,7 +155,10 @@ def make_plot(
     values = [row.normalized_performance for row in rows]
     colors = [POLICY_COLORS[row.policy] for row in rows]
     width = max(7.2, 0.72 * len(rows) + 2.2)
-    figure, axis = plt.subplots(figsize=(width, 4.8))
+    # Reserve dedicated rows above the axes for the figure title and legend.
+    # Keeping both as figure-level artists avoids the overlap that occurs when
+    # an axes title and an axes legend compete for the same top margin.
+    figure, axis = plt.subplots(figsize=(width, 5.0))
 
     bars = axis.bar(
         x_positions,
@@ -193,7 +196,8 @@ def make_plot(
     for policy in POLICY_COLORS:
         if any(row.policy == policy for row in rows):
             present_policies.append(policy)
-    axis.legend(
+    legend_y = 0.89 if title else 0.97
+    figure.legend(
         handles=[
             Patch(
                 facecolor=POLICY_COLORS[policy],
@@ -203,15 +207,16 @@ def make_plot(
             for policy in present_policies
         ],
         loc="upper center",
-        bbox_to_anchor=(0.5, 1.16),
+        bbox_to_anchor=(0.5, legend_y),
         ncol=len(present_policies),
         frameon=False,
         fontsize=9,
     )
     if title:
-        axis.set_title(title, fontsize=12, fontweight="bold", pad=28)
+        figure.suptitle(title, fontsize=12, fontweight="bold", y=0.975)
 
-    figure.tight_layout()
+    axes_top = 0.90 if title else 0.95
+    figure.tight_layout(rect=(0, 0, 1, axes_top))
     try:
         figure.savefig(png_path, dpi=dpi, bbox_inches="tight")
         figure.savefig(pdf_path, bbox_inches="tight")

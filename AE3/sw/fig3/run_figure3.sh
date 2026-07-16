@@ -32,6 +32,16 @@ Options:
                         importing Matplotlib; plot later with --skip-benchmark
   -h, --help            Show this help
 
+Environment:
+  FIG3_CASE_INTERVAL_SEC  Delay after each newly executed case before the next
+                          case starts (default: 30; use 0 to disable)
+  FIG3_LOCK_RETRY_INTERVAL_SEC
+                          Delay between retries when the shared ARC host lock
+                          is temporarily busy (default: 10)
+  FIG3_LOCK_RETRY_TIMEOUT_SEC
+                          Maximum total lock-retry wait for one case in seconds
+                          (default: 300; use 0 to disable automatic retry)
+
 CSV collection and plotting require the complete eleven-case sweep. A single
 --case invocation updates only that canonical run and the deterministic full
 manifest; use --case all --resume after individual cases to collect the CSV.
@@ -70,6 +80,9 @@ resume=0
 skip_benchmark=0
 skip_plot=0
 selected_case="all"
+FIG3_CASE_INTERVAL_SEC="${FIG3_CASE_INTERVAL_SEC:-30}"
+FIG3_LOCK_RETRY_INTERVAL_SEC="${FIG3_LOCK_RETRY_INTERVAL_SEC:-10}"
+FIG3_LOCK_RETRY_TIMEOUT_SEC="${FIG3_LOCK_RETRY_TIMEOUT_SEC:-300}"
 if (( $# >= 2 )) && [[ "$1" == all && "$2" == yes ]]; then
     auto_yes=1
     shift 2
@@ -103,6 +116,12 @@ esac
 if (( skip_benchmark == 1 )) && [[ "$selected_case" != all ]]; then
     ae_die "--skip-benchmark processes the complete sweep and requires --case all"
 fi
+[[ "$FIG3_CASE_INTERVAL_SEC" =~ ^[0-9]+$ ]] || \
+    ae_die "FIG3_CASE_INTERVAL_SEC must be a non-negative integer"
+[[ "$FIG3_LOCK_RETRY_INTERVAL_SEC" =~ ^[1-9][0-9]*$ ]] || \
+    ae_die "FIG3_LOCK_RETRY_INTERVAL_SEC must be a positive integer"
+[[ "$FIG3_LOCK_RETRY_TIMEOUT_SEC" =~ ^[0-9]+$ ]] || \
+    ae_die "FIG3_LOCK_RETRY_TIMEOUT_SEC must be a non-negative integer"
 
 command -v python3 >/dev/null 2>&1 || ae_die "python3 is required"
 [[ -r "${SCRIPT_DIR}/collect_results.py" ]] || ae_die "missing collector: ${SCRIPT_DIR}/collect_results.py"
@@ -214,10 +233,62 @@ write_full_manifest() {
     append_manifest_point 11 mig cms 96 400001 fig3_cms_th96 CMS-96
 }
 
+run_with_transient_lock_retry() {
+    local ARC_LOCK_BUSY_MARKER runner_rc waited_sec=0 retry_delay
+
+    ARC_LOCK_BUSY_MARKER="$(mktemp "${TMPDIR:-/tmp}/ae3-fig3-lock-busy.XXXXXX")" || \
+        ae_die "cannot create the temporary runner lock marker"
+    rm -f "$ARC_LOCK_BUSY_MARKER"
+    export ARC_LOCK_BUSY_MARKER
+    while true; do
+        rm -f "$ARC_LOCK_BUSY_MARKER"
+        if "$@"; then
+            runner_rc=0
+        else
+            runner_rc=$?
+        fi
+        if (( runner_rc == 0 )); then
+            rm -f "$ARC_LOCK_BUSY_MARKER"
+            return 0
+        fi
+
+        # The runner creates this per-attempt marker only when its nonblocking
+        # flock fails. Stderr remains live; workload/setup failures never retry.
+        if [[ ! -e "$ARC_LOCK_BUSY_MARKER" ]]; then
+            rm -f "$ARC_LOCK_BUSY_MARKER"
+            return "$runner_rc"
+        fi
+        if (( FIG3_LOCK_RETRY_TIMEOUT_SEC == 0 )); then
+            rm -f "$ARC_LOCK_BUSY_MARKER"
+            printf 'ERROR: automatic shared-lock retry is disabled; ' >&2
+            printf 'rerun this sweep with --resume after the other command exits\n' >&2
+            return "$runner_rc"
+        fi
+        if (( waited_sec >= FIG3_LOCK_RETRY_TIMEOUT_SEC )); then
+            rm -f "$ARC_LOCK_BUSY_MARKER"
+            printf 'ERROR: shared ARC host lock remained busy after %s seconds; ' \
+                "$FIG3_LOCK_RETRY_TIMEOUT_SEC" >&2
+            printf 'rerun this sweep with --resume after the other command exits\n' >&2
+            return "$runner_rc"
+        fi
+
+        retry_delay="$FIG3_LOCK_RETRY_INTERVAL_SEC"
+        if (( retry_delay > FIG3_LOCK_RETRY_TIMEOUT_SEC - waited_sec )); then
+            retry_delay=$((FIG3_LOCK_RETRY_TIMEOUT_SEC - waited_sec))
+        fi
+        printf '[lock retry] ARC host lock is still busy; preserving completed results ' >&2
+        printf 'and retrying this case in %s seconds (%s/%s seconds waited).\n' \
+            "$retry_delay" "$waited_sec" "$FIG3_LOCK_RETRY_TIMEOUT_SEC" >&2
+        sleep "$retry_delay"
+        waited_sec=$((waited_sec + retry_delay))
+    done
+}
+
 run_point() {
     local order="$1" method="$2" policy="$3" threshold="$4"
     local epoch="$5" tag="$6" label="$7"
 
+    CASE_EXECUTED=0
     point_paths "$threshold" "$epoch" "$method" "$tag"
     if (( resume == 1 )) && point_valid; then
         printf '[%02d/11] reuse valid %s\n' "$order" "$POINT_LOG"
@@ -247,13 +318,16 @@ run_point() {
     fi
 
     if [[ "$suite" == gapbs ]]; then
-        ae_run_gapbs_point "$SW_DIR" "$out_base" "$threshold" "$epoch" \
+        run_with_transient_lock_retry \
+            ae_run_gapbs_point "$SW_DIR" "$out_base" "$threshold" "$epoch" \
             "$benchmark" "$dataset" "$method" "$tag" "${extra_env[@]}"
     else
-        ae_run_spec_point "$SW_DIR" "$out_base" "$threshold" "$epoch" \
+        run_with_transient_lock_retry \
+            ae_run_spec_point "$SW_DIR" "$out_base" "$threshold" "$epoch" \
             "$benchmark" "$method" "$tag" "${extra_env[@]}"
     fi
     point_valid || ae_die "runner returned success but the workload log is incomplete: $POINT_LOG"
+    CASE_EXECUTED=1
 }
 
 process_case() {
@@ -334,8 +408,17 @@ if (( skip_benchmark == 1 )); then
     validate_full_sweep
     printf '[1/3] Benchmark skipped; all canonical logs and runtime summaries validated.\n'
 elif [[ "$selected_case" == all ]]; then
-    for case_name in baseline anb damon cache16 cache32 cache64 cache96 cms16 cms32 cms64 cms96; do
+    figure3_cases=(baseline anb damon cache16 cache32 cache64 cache96 cms16 cms32 cms64 cms96)
+    for case_index in "${!figure3_cases[@]}"; do
+        case_name="${figure3_cases[$case_index]}"
         process_case "$case_name"
+        if (( CASE_EXECUTED == 1 && \
+              case_index + 1 < ${#figure3_cases[@]} && \
+              FIG3_CASE_INTERVAL_SEC > 0 )); then
+            printf '[interval] Waiting %s seconds before the next Figure 3 case.\n' \
+                "$FIG3_CASE_INTERVAL_SEC"
+            sleep "$FIG3_CASE_INTERVAL_SEC"
+        fi
     done
     printf '[1/3] All eleven benchmark points completed or reused.\n'
 else

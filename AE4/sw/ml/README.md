@@ -47,6 +47,15 @@ mean of all ten trials in one invocation. SPEC training optimizes the single
 reporting metric, which is a 25-sample geometric mean of Trial Time positions
 6--10 from five invocations.
 
+The 20-trial optimizer invokes the same host-locked benchmark runner
+sequentially. Each runner explicitly unlocks and closes the shared ARC lock
+after cleanup, before the Python subprocess returns, so a completed trial
+cannot self-block the next trial through an inherited logging process. No
+artificial inter-trial delay or automatic retry is therefore applied. A real
+concurrent ARC command still stops the optional study instead of being treated
+as a training result; rerun the training command with `--resume` after that
+command exits. Only fully validated completed trials are retained in history.
+
 The candidate procedure follows the earlier study:
 
 1. Start from the workload seed cfg.

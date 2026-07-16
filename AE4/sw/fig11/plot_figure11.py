@@ -27,6 +27,7 @@ warnings.filterwarnings(
 )
 
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 from matplotlib.ticker import MultipleLocator
 
 
@@ -40,6 +41,13 @@ METHOD_COLORS = {
     "cache": "#59A14F",
     "cms": "#B07AA1",
     "adaptive": "#E15759",
+}
+METHOD_NAMES = {
+    "local": "Local-only",
+    "cxl": "CXL-only",
+    "cache": "CHMU-Cache",
+    "cms": "CHMU-CMS",
+    "adaptive": "Adaptive",
 }
 
 
@@ -149,7 +157,10 @@ def make_plot(
     x_positions = list(range(len(rows)))
     values = [row.normalized_performance for row in rows]
     colors = [METHOD_COLORS[row.method] for row in rows]
-    figure, axis = plt.subplots(figsize=(max(6.8, len(rows) * 1.25), 4.8))
+    # Give the figure title, method legend, and plotting axes their own
+    # vertical regions.  Figure-level artists avoid the title/legend overlap
+    # that can occur when both compete for an axes' top margin.
+    figure, axis = plt.subplots(figsize=(max(6.8, len(rows) * 1.25), 5.0))
     bars = axis.bar(
         x_positions,
         values,
@@ -182,9 +193,26 @@ def make_plot(
             fontsize=9,
         )
 
+    figure.legend(
+        handles=[
+            Patch(
+                facecolor=METHOD_COLORS[row.method],
+                edgecolor="#333333",
+                label=METHOD_NAMES[row.method],
+            )
+            for row in rows
+        ],
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.89 if title else 0.975),
+        ncol=len(rows),
+        frameon=False,
+        fontsize=9,
+    )
     if title:
-        axis.set_title(title, fontsize=12, fontweight="bold", pad=12)
-    figure.tight_layout()
+        figure.suptitle(title, fontsize=12, fontweight="bold", y=0.975)
+
+    axes_top = 0.90 if title else 0.95
+    figure.tight_layout(rect=(0, 0, 1, axes_top))
     try:
         figure.savefig(png_path, dpi=dpi, bbox_inches="tight")
         figure.savefig(pdf_path, bbox_inches="tight")

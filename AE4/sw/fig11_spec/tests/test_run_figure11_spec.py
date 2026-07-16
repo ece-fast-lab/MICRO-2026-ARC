@@ -33,14 +33,28 @@ class SpecFigure11ShellIntegrationTest(unittest.TestCase):
             )
             adaptive_manager_logs: list[Path] = []
             methods = {
-                "cxl": ("baseline", 400000, 400000, 100.0),
-                "cache": ("mig", 400000, 400000, 50.0),
-                "cms": ("mig", 400001, 400001, 80.0),
-                "adaptive": ("mig", 400000, 400001, 40.0),
+                "cxl": ("baseline", 400000, 400000, "cxl", 100.0),
+                "cache": ("mig", 400000, 400000, "cache", 50.0),
+                "cms": ("mig", 400001, 400001, "cms", 80.0),
+                "adaptive_400000_400001": (
+                    "mig", 400000, 400001, "adaptive", 40.0
+                ),
+                # The reverse direction is intentionally faster so the test
+                # proves that the optional SPEC Adaptive bar is selected from
+                # both complete five-repeat candidates.
+                "adaptive_400001_400000": (
+                    "mig", 400001, 400000, "adaptive_400001_400000", 30.0
+                ),
             }
-            for method, (mode, epoch_a, epoch_b, seconds) in methods.items():
+            for method, (
+                mode,
+                epoch_a,
+                epoch_b,
+                tag_method,
+                seconds,
+            ) in methods.items():
                 for repeat in range(1, 6):
-                    tag = f"fig11spec_{method}_rep{repeat:02d}"
+                    tag = f"fig11spec_{tag_method}_rep{repeat:02d}"
                     run_dir = runs / (
                         f"16_{epoch_a}_{epoch_b}_1_502_{mode}_{tag}"
                     )
@@ -60,12 +74,12 @@ class SpecFigure11ShellIntegrationTest(unittest.TestCase):
                         "TRACKER_DISABLE_FAILED=0\n",
                         encoding="utf-8",
                     )
-                    if method == "adaptive":
+                    if method.startswith("adaptive_"):
                         manager_log = run_dir / "migration_manager.log"
                         manager_log.write_text(
                             f"[ml-predict] loaded model override from {frozen_cfg}\n"
                             "[mode-switch] ML policy active: "
-                            "mode0(epoch=400000) vs mode1(epoch=400001)\n",
+                            f"mode0(epoch={epoch_a}) vs mode1(epoch={epoch_b})\n",
                             encoding="utf-8",
                         )
                         adaptive_manager_logs.append(manager_log)
@@ -105,6 +119,46 @@ class SpecFigure11ShellIntegrationTest(unittest.TestCase):
                 ["cxl", "cache", "cms", "adaptive"],
             )
             self.assertTrue(all(row["selected_sample_count"] == "5" for row in rows))
+            adaptive_row = next(row for row in rows if row["method"] == "adaptive")
+            self.assertEqual(
+                adaptive_row["selected_adaptive_direction"],
+                "adaptive_400001_400000",
+            )
+            self.assertLess(
+                float(adaptive_row["adaptive_400001_400000_geomean_seconds"]),
+                float(adaptive_row["adaptive_400000_400001_geomean_seconds"]),
+            )
+            with (result_dir / "figure11_spec_manifest.csv").open(
+                encoding="utf-8", newline=""
+            ) as manifest_file:
+                manifest_rows = list(csv.DictReader(manifest_file))
+            for direction in (
+                "adaptive_400000_400001",
+                "adaptive_400001_400000",
+            ):
+                self.assertEqual(
+                    sum(row["method"] == direction for row in manifest_rows), 5
+                )
+            with (result_dir / "figure11_spec_selected_samples.csv").open(
+                encoding="utf-8", newline=""
+            ) as samples_file:
+                sample_rows = list(csv.DictReader(samples_file))
+            self.assertEqual(
+                sum(
+                    row["method"] == "adaptive_400000_400001"
+                    and row["selected_for_adaptive_bar"] == "no"
+                    for row in sample_rows
+                ),
+                5,
+            )
+            self.assertEqual(
+                sum(
+                    row["method"] == "adaptive_400001_400000"
+                    and row["selected_for_adaptive_bar"] == "yes"
+                    for row in sample_rows
+                ),
+                5,
+            )
             self.assertGreater(
                 (result_dir / "figure11_spec_normalized_performance.png").stat().st_size,
                 0,
@@ -118,6 +172,15 @@ class SpecFigure11ShellIntegrationTest(unittest.TestCase):
             metadata = (result_dir / "run_metadata.txt").read_text(encoding="utf-8")
             self.assertIn(f"adaptive_cfg_snapshot={frozen_cfg}\n", metadata)
             self.assertIn(f"adaptive_cfg_sha256={model_sha256}\n", metadata)
+            self.assertIn("adaptive_repetitions_per_direction=5\n", metadata)
+            self.assertIn(
+                "adaptive_candidate_directions=400000/400001,400001/400000\n",
+                metadata,
+            )
+            self.assertIn(
+                "adaptive_selection=lower_5_sample_geomean_seconds\n",
+                metadata,
+            )
             self.assertIn("selected_samples_per_method=5\n", metadata)
             self.assertIn("plot_status=generated\n", metadata)
 

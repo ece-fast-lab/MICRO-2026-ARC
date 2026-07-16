@@ -41,12 +41,27 @@ class SpecCollectorTests(unittest.TestCase):
         )
         return path
 
-    def build_manifest(self) -> Path:
+    def build_manifest(
+        self,
+        forward_seconds: float = 40.0,
+        reverse_seconds: float = 60.0,
+    ) -> Path:
         methods = (
             (1, "cxl", "CXL-only", 100.0),
             (2, "cache", "CHMU-Cache", 50.0),
             (3, "cms", "CHMU-CMS", 80.0),
-            (4, "adaptive", "Adaptive", 40.0),
+            (
+                4,
+                "adaptive_400000_400001",
+                "Adaptive 400000/400001",
+                forward_seconds,
+            ),
+            (
+                5,
+                "adaptive_400001_400000",
+                "Adaptive 400001/400000",
+                reverse_seconds,
+            ),
         )
         rows = []
         for order, method, label, seconds in methods:
@@ -104,7 +119,7 @@ class SpecCollectorTests(unittest.TestCase):
         self.assertEqual(
             [row["method"] for row in rows], ["cxl", "cache", "cms", "adaptive"]
         )
-        self.assertEqual(len(sample_rows), 20)
+        self.assertEqual(len(sample_rows), 25)
         self.assertTrue(all(row["selected_sample_count"] == "5" for row in rows))
         self.assertTrue(
             all(row["total_runtime_match_count"] == "10" for row in rows)
@@ -126,6 +141,78 @@ class SpecCollectorTests(unittest.TestCase):
             math.isclose(
                 float(by_method["adaptive"]["normalized_performance"]), 2.5
             )
+        )
+        self.assertEqual(
+            by_method["adaptive"]["selected_adaptive_direction"],
+            "adaptive_400000_400001",
+        )
+        self.assertTrue(
+            math.isclose(
+                float(
+                    by_method["adaptive"][
+                        "adaptive_400000_400001_geomean_seconds"
+                    ]
+                ),
+                40.0,
+            )
+        )
+        self.assertTrue(
+            math.isclose(
+                float(
+                    by_method["adaptive"][
+                        "adaptive_400001_400000_geomean_seconds"
+                    ]
+                ),
+                60.0,
+            )
+        )
+        adaptive_samples = [
+            row for row in sample_rows if row["method"].startswith("adaptive_")
+        ]
+        self.assertEqual(len(adaptive_samples), 10)
+        self.assertEqual(
+            {
+                row["method"]
+                for row in adaptive_samples
+                if row["selected_for_adaptive_bar"] == "yes"
+            },
+            {"adaptive_400000_400001"},
+        )
+
+    def test_reverse_direction_wins_and_both_directions_remain_auditable(self) -> None:
+        manifest = self.build_manifest(forward_seconds=70.0, reverse_seconds=35.0)
+        summary = self.root / "summary.csv"
+        samples = self.root / "samples.csv"
+        collect_results(manifest, summary, samples)
+
+        with summary.open(encoding="utf-8", newline="") as summary_file:
+            adaptive = next(
+                row for row in csv.DictReader(summary_file)
+                if row["method"] == "adaptive"
+            )
+        self.assertEqual(
+            adaptive["selected_adaptive_direction"],
+            "adaptive_400001_400000",
+        )
+        self.assertTrue(math.isclose(float(adaptive["geomean_seconds"]), 35.0))
+
+        with samples.open(encoding="utf-8", newline="") as samples_file:
+            sample_rows = list(csv.DictReader(samples_file))
+        self.assertEqual(
+            {
+                row["method"]
+                for row in sample_rows
+                if row["selected_for_adaptive_bar"] == "yes"
+            },
+            {"adaptive_400001_400000"},
+        )
+        self.assertEqual(
+            {
+                row["method"]
+                for row in sample_rows
+                if row["selected_for_adaptive_bar"] == "no"
+            },
+            {"adaptive_400000_400001"},
         )
 
 

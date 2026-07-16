@@ -27,7 +27,9 @@ Options:
 
 Odd trials start with 400000/400001; even trials reverse the starting order.
 Failed or incomplete runs are never appended to history. This script never
-programs a POF or reboots SPR1.
+programs a POF or reboots SPR1. Trials run strictly sequentially. If another
+ARC command owns the shared host lock, this optional study stops; rerun the
+same command with --resume after the other command finishes.
 EOF
 }
 
