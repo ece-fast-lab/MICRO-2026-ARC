@@ -20,6 +20,10 @@ successful complete benchmark executions, not 20 additional executions.
 Options:
   --threshold <16|32|64|96>  CHMU threshold (default: 16)
   --target-trials <N>        Total successful trials desired (default: 20)
+  --profile <name>           Isolate output below results/retraining/<name>
+  --trial-interval-sec <N>   Idle seconds between successful runs (default: 30)
+  --seed-model-path <file>   First candidate cfg (default: shipped cfg for the
+                             selected threshold, suite, and workload)
   --resume                   Continue the existing validated history up to N
   --fresh                    Back up an existing study to .bakN and start over
   all yes, -y, --yes         Confirm the SPL1 image and long-running study
@@ -27,9 +31,9 @@ Options:
 
 Odd trials start with 400000/400001; even trials reverse the starting order.
 Failed or incomplete runs are never appended to history. This script never
-programs a POF or reboots SPR1. Trials run strictly sequentially. If another
-ARC command owns the shared host lock, this optional study stops; rerun the
-same command with --resume after the other command finishes.
+programs a POF or reboots SPR1. Trials run strictly sequentially. Runner-marked
+shared-lock contention is retried for up to 300 seconds by default; workload,
+manager, perf, and validation failures stop immediately without adding a row.
 EOF
 }
 
@@ -68,6 +72,11 @@ esac
 
 threshold=16
 target_trials=20
+profile=""
+trial_interval_sec="${TRAINING_TRIAL_INTERVAL_SEC:-30}"
+lock_retry_interval_sec="${TRAINING_LOCK_RETRY_INTERVAL_SEC:-10}"
+lock_retry_timeout_sec="${TRAINING_LOCK_RETRY_TIMEOUT_SEC:-300}"
+seed_model_path=""
 auto_yes=0
 resume=0
 fresh=0
@@ -79,6 +88,15 @@ while (( $# > 0 )); do
         --target-trials|--trials)
             (( $# >= 2 )) || ae_die "$1 requires a value"
             target_trials="$2"; shift 2; continue ;;
+        --profile)
+            (( $# >= 2 )) || ae_die "--profile requires a value"
+            profile="$2"; shift 2; continue ;;
+        --trial-interval-sec)
+            (( $# >= 2 )) || ae_die "--trial-interval-sec requires a value"
+            trial_interval_sec="$2"; shift 2; continue ;;
+        --seed-model-path)
+            (( $# >= 2 )) || ae_die "--seed-model-path requires a value"
+            seed_model_path="$2"; shift 2; continue ;;
         --resume) resume=1 ;;
         --fresh) fresh=1 ;;
         -y|--yes|--all-yes) auto_yes=1 ;;
@@ -92,6 +110,14 @@ while (( $# > 0 )); do
 done
 case "$threshold" in 16|32|64|96) ;; *) ae_die "threshold must be 16, 32, 64, or 96" ;; esac
 [[ "$target_trials" =~ ^[1-9][0-9]*$ ]] || ae_die "target trial count must be positive"
+[[ -z "$profile" || "$profile" =~ ^[A-Za-z0-9._-]+$ ]] || \
+    ae_die "profile may contain only letters, digits, dot, underscore, and dash"
+[[ "$trial_interval_sec" =~ ^[0-9]+$ ]] || \
+    ae_die "trial interval must be a non-negative integer"
+[[ "$lock_retry_interval_sec" =~ ^[1-9][0-9]*$ ]] || \
+    ae_die "TRAINING_LOCK_RETRY_INTERVAL_SEC must be a positive integer"
+[[ "$lock_retry_timeout_sec" =~ ^[0-9]+$ ]] || \
+    ae_die "TRAINING_LOCK_RETRY_TIMEOUT_SEC must be a non-negative integer"
 (( resume == 0 || fresh == 0 )) || ae_die "--resume and --fresh are mutually exclusive"
 
 command -v python3 >/dev/null 2>&1 || ae_die "python3 is required"
@@ -116,12 +142,29 @@ else
         ae_die "SPEC_RUNCPU/SPEC_CONFIG is not ready in $benchmark_paths_file"
 fi
 
+if [[ -z "$seed_model_path" ]]; then
+    if [[ "$suite" == gapbs ]]; then
+        seed_suite=gap
+    else
+        seed_suite=spec
+    fi
+    seed_model_path="${SCRIPT_DIR}/pretrained/th${threshold}/${seed_suite}/${workload_key}.cfg"
+fi
+[[ -r "$seed_model_path" ]] || ae_die "seed model cfg is not readable: $seed_model_path"
+seed_model_path="$(cd -- "$(dirname -- "$seed_model_path")" && pwd)/$(basename -- "$seed_model_path")"
+ae_validate_model_cfg "$seed_model_path" "$workload_key"
+
 ae_confirm "$auto_yes" "Confirm that the SPL1 POF is loaded and run the optional long ${target_trials}-trial ${workload_key} study" || {
     printf 'Stopped before any benchmark.\n'
     exit 0
 }
 
-study_dir="${ARTIFACT_DIR}/results/training/th${threshold}/${suite}/${workload_key}"
+if [[ -n "$profile" ]]; then
+    output_root="${ARTIFACT_DIR}/results/retraining/${profile}/training"
+else
+    output_root="${ARTIFACT_DIR}/results/training"
+fi
+study_dir="${output_root}/th${threshold}/${suite}/${workload_key}"
 if [[ -e "$study_dir" && "$resume" == 0 ]]; then
     if (( fresh == 0 )); then
         ae_confirm "$auto_yes" "Existing study found for ${workload_key}; back it up to .bakN and start a fresh ${target_trials}-trial study?" || {
@@ -144,10 +187,15 @@ argv=(
     --benchmark "$benchmark"
     --threshold "$threshold"
     --target-trials "$target_trials"
+    --output-root "$output_root"
     --epoch-a 400000
     --epoch-b 400001
     --poll-ms 1
     --predictor-interval-ms 10
+    --trial-interval-sec "$trial_interval_sec"
+    --lock-retry-interval-sec "$lock_retry_interval_sec"
+    --lock-retry-timeout-sec "$lock_retry_timeout_sec"
+    --seed-model-path "$seed_model_path"
 )
 if [[ "$suite" == gapbs ]]; then
     argv+=(--db "$database")
@@ -157,4 +205,7 @@ fi
 "${argv[@]}"
 
 printf '\nTraining study complete: %s\n' "$study_dir"
+if [[ -n "$profile" ]]; then
+    printf 'Training profile: %s\n' "$profile"
+fi
 printf 'Run all five workloads in this suite before suite-isolated LOBO generation.\n'

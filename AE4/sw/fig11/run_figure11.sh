@@ -32,6 +32,10 @@ Options:
                              plot unless --skip-plot is added
   --skip-plot                Run/validate benchmarks and, once the full sweep
                              exists, collect CSV without importing Matplotlib
+  --model-root <directory>   Use a generated profile containing <key>.cfg and
+                             profile_manifest.txt instead of shipped cfgs
+  --result-profile <name>    Isolate results below figure11_profiles/<name>;
+                             required with --model-root
   --method, --case <name>    Run only all, cxl, cache, cms, or adaptive;
                              adaptive runs both epoch directions. Advanced
                              selectors adaptive_400000_400001 and
@@ -82,6 +86,8 @@ skip_benchmark=0
 skip_plot=0
 include_local=0
 selected_method=all
+model_root_override=""
+result_profile=""
 FIG11_CASE_INTERVAL_SEC="${FIG11_CASE_INTERVAL_SEC:-30}"
 FIG11_LOCK_RETRY_INTERVAL_SEC="${FIG11_LOCK_RETRY_INTERVAL_SEC:-10}"
 FIG11_LOCK_RETRY_TIMEOUT_SEC="${FIG11_LOCK_RETRY_TIMEOUT_SEC:-300}"
@@ -97,6 +103,12 @@ while (( $# > 0 )); do
         --resume) resume=1 ;;
         --skip-benchmark) skip_benchmark=1 ;;
         --skip-plot) skip_plot=1 ;;
+        --model-root)
+            (( $# >= 2 )) || ae_die "--model-root requires a value"
+            model_root_override="$2"; shift 2; continue ;;
+        --result-profile)
+            (( $# >= 2 )) || ae_die "--result-profile requires a value"
+            result_profile="$2"; shift 2; continue ;;
         --method|--case)
             (( $# >= 2 )) || ae_die "$1 requires a value"
             selected_method="$2"; shift 2; continue ;;
@@ -125,23 +137,61 @@ fi
     ae_die "FIG11_LOCK_RETRY_INTERVAL_SEC must be a positive integer"
 [[ "$FIG11_LOCK_RETRY_TIMEOUT_SEC" =~ ^[0-9]+$ ]] || \
     ae_die "FIG11_LOCK_RETRY_TIMEOUT_SEC must be a non-negative integer"
+[[ -z "$result_profile" || "$result_profile" =~ ^[A-Za-z0-9._-]+$ ]] || \
+    ae_die "result profile may contain only letters, digits, dot, underscore, and dash"
+if [[ -n "$model_root_override" && -z "$result_profile" ]]; then
+    ae_die "--model-root requires --result-profile so generated-model results cannot collide with the shipped baseline"
+fi
 
 command -v python3 >/dev/null 2>&1 || ae_die "python3 is required"
 command -v sha256sum >/dev/null 2>&1 || ae_die "sha256sum is required"
 [[ -r "${SCRIPT_DIR}/collect_results.py" ]] || ae_die "missing Figure 11 collector"
 [[ -r "${SCRIPT_DIR}/plot_figure11.py" ]] || ae_die "missing Figure 11 plotter"
 
-model_dir="${SW_DIR}/ml/pretrained/th${threshold}/gap"
-[[ -d "$model_dir" ]] || \
-    ae_die "pretrained configuration directory is missing for threshold ${threshold}: $model_dir"
-pretrained_model_cfg="$(cd -- "$model_dir" && pwd)/${workload_key}.cfg"
+model_source_kind=shipped-pretrained
+model_profile_manifest=""
+if [[ -n "$model_root_override" ]]; then
+    [[ -d "$model_root_override" ]] || \
+        ae_die "generated model root is not a directory: $model_root_override"
+    model_dir="$(cd -- "$model_root_override" && pwd)"
+    pretrained_model_cfg="${model_dir}/${workload_key}.cfg"
+    [[ -f "$pretrained_model_cfg" ]] || \
+        ae_die "model root is missing ${workload_key}.cfg: $model_dir"
+    model_profile_manifest="${model_dir}/profile_manifest.txt"
+    [[ -r "$model_profile_manifest" ]] || \
+        ae_die "generated model root is missing profile_manifest.txt: $model_dir"
+    grep -Fxq "profile=${result_profile}" "$model_profile_manifest" || \
+        ae_die "model profile manifest does not match --result-profile ${result_profile}"
+    grep -Fxq "threshold=${threshold}" "$model_profile_manifest" || \
+        ae_die "model profile manifest does not match threshold ${threshold}"
+    grep -Fxq 'suite=gap' "$model_profile_manifest" || \
+        ae_die "model profile manifest is not a GAPBS LOBO profile"
+    model_source_kind=generated-profile
+else
+    model_dir="${SW_DIR}/ml/pretrained/th${threshold}/gap"
+    [[ -d "$model_dir" ]] || \
+        ae_die "pretrained configuration directory is missing for threshold ${threshold}: $model_dir"
+    pretrained_model_cfg="$(cd -- "$model_dir" && pwd)/${workload_key}.cfg"
+fi
 ae_validate_model_cfg "$pretrained_model_cfg" "$workload_key"
 model_cfg_sha256="$(sha256sum "$pretrained_model_cfg" | awk '{print $1}')"
+model_profile_manifest_sha256=""
+if [[ -n "$model_profile_manifest" ]]; then
+    grep -Fxq "cfg_sha256.${workload_key}=${model_cfg_sha256}" \
+        "$model_profile_manifest" || \
+        ae_die "selected cfg hash does not match the model profile manifest: $pretrained_model_cfg"
+    model_profile_manifest_sha256="$(sha256sum "$model_profile_manifest" | awk '{print $1}')"
+fi
 
 results_root="${AE4_RESULTS_ROOT:-${ARTIFACT_DIR}/results}"
 mkdir -p "$results_root"
 results_root="$(cd -- "$results_root" && pwd)"
-result_dir="${results_root}/figure11/th${threshold}/${workload_key}"
+if [[ -n "$result_profile" ]]; then
+    result_namespace="figure11_profiles/${result_profile}"
+else
+    result_namespace=figure11
+fi
+result_dir="${results_root}/${result_namespace}/th${threshold}/${workload_key}"
 out_base="${result_dir}/runs"
 manifest="${result_dir}/figure11_manifest.csv"
 summary_csv="${result_dir}/figure11_results.csv"
@@ -191,9 +241,13 @@ printf '  repetitions    : 5 complete GAPBS invocations per fixed method and ada
 printf '  selected data  : Trial Time 6-10 per invocation (25 samples/candidate)\n'
 printf '  adaptive bar   : faster complete direction by 25-sample geometric-mean time\n'
 printf '  plot metric    : CXL-only time / method time (higher is better)\n'
-printf '  supplied cfg   : %s\n' "$pretrained_model_cfg"
+printf '  cfg source     : %s\n' "$model_source_kind"
+printf '  selected cfg   : %s\n' "$pretrained_model_cfg"
 printf '  frozen cfg     : %s\n' "$model_cfg"
 printf '  cfg SHA-256    : %s\n' "$model_cfg_sha256"
+if [[ -n "$model_profile_manifest" ]]; then
+    printf '  profile manifest: %s\n' "$model_profile_manifest"
+fi
 printf '  required POF   : SPL1\n'
 printf '  output         : %s\n\n' "$result_dir"
 
@@ -476,9 +530,15 @@ fi
     printf 'adaptive_reverse_epoch_a=400001\nadaptive_reverse_epoch_b=400000\n'
     printf 'adaptive_selection=lower_25_sample_geomean_seconds\npredictor_interval_ms=10\n'
     printf 'adaptive_cfg_source=%s\n' "$pretrained_model_cfg"
+    printf 'adaptive_cfg_source_kind=%s\n' "$model_source_kind"
+    printf 'adaptive_model_root=%s\n' "$model_dir"
+    printf 'adaptive_model_profile_manifest=%s\n' "${model_profile_manifest:-none}"
+    printf 'adaptive_model_profile_manifest_sha256=%s\n' \
+        "${model_profile_manifest_sha256:-none}"
     printf 'adaptive_cfg_snapshot=%s\n' "$model_cfg"
     printf 'adaptive_cfg_sha256=%s\n' "$model_cfg_sha256"
     printf 'local_included=%s\n' "$include_local"
+    printf 'result_profile=%s\n' "${result_profile:-shipped-default}"
     printf 'plot_status=%s\n' "$plot_status"
     printf 'completed_at=%s\n' "$(TZ=America/Chicago date --iso-8601=seconds)"
 } > "$metadata_file"

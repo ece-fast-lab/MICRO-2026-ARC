@@ -11,6 +11,11 @@ in each artifact directory:
 | AE3 | [AE3/README.md](AE3/README.md) |
 | AE4 | [AE4/README.md](AE4/README.md) |
 
+AE4 normally uses the shipped pretrained configurations. Its optional
+current-system retraining path runs five GAPBS workloads for 20 successful
+invocations each (100 total) and is documented in
+[`AE4/sw/ml/README.md`](AE4/sw/ml/README.md).
+
 For example:
 
 ```bash

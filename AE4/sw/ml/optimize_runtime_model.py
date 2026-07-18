@@ -14,6 +14,7 @@ import random
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -447,7 +448,9 @@ def run_trial(sw_dir: Path,
               predictor_interval_ms: int,
               model_path: Path,
               copies: int,
-              trial_number: int) -> tuple:
+              trial_number: int,
+              lock_retry_interval_sec: int,
+              lock_retry_timeout_sec: int) -> tuple:
     build_option_dir = sw_dir / f"build_option_th{th}"
     if suite == "spec":
         run_script = sw_dir / "benchmark" / "run_spec.sh"
@@ -496,19 +499,50 @@ def run_trial(sw_dir: Path,
     env["RECLAIM_COOLDOWN_SEC"] = "1"
     env["OMP_THREADS"] = "8"
 
+    marker_fd, marker_name = tempfile.mkstemp(prefix="ae4-training-lock-busy-")
+    os.close(marker_fd)
+    lock_busy_marker = Path(marker_name)
+    lock_busy_marker.unlink(missing_ok=True)
+    env["ARC_LOCK_BUSY_MARKER"] = str(lock_busy_marker)
+
     start_ts = time.time()
-    completed = subprocess.run(
-        run_argv,
-        cwd=str(study_dir),
-        env=env,
-        check=False,
-    )
+    waited_sec = 0
+    try:
+        while True:
+            lock_busy_marker.unlink(missing_ok=True)
+            completed = subprocess.run(
+                run_argv,
+                cwd=str(study_dir),
+                env=env,
+                check=False,
+            )
+            if completed.returncode == 0:
+                break
+            if not lock_busy_marker.exists():
+                raise RuntimeError(
+                    f"Benchmark trial {trial_number} failed with "
+                    f"rc={completed.returncode}; history was not updated"
+                )
+            if lock_retry_timeout_sec == 0 or waited_sec >= lock_retry_timeout_sec:
+                raise RuntimeError(
+                    f"Benchmark trial {trial_number} could not acquire the ARC host "
+                    f"lock after {waited_sec} seconds; history was not updated"
+                )
+            delay = min(
+                lock_retry_interval_sec,
+                lock_retry_timeout_sec - waited_sec,
+            )
+            print(
+                f"[lock retry] ARC host lock is busy; retrying trial "
+                f"{trial_number} in {delay} seconds "
+                f"({waited_sec}/{lock_retry_timeout_sec} seconds waited).",
+                flush=True,
+            )
+            time.sleep(delay)
+            waited_sec += delay
+    finally:
+        lock_busy_marker.unlink(missing_ok=True)
     elapsed_wall_sec = time.time() - start_ts
-    if completed.returncode != 0:
-        raise RuntimeError(
-            f"Benchmark trial {trial_number} failed with rc={completed.returncode}; "
-            "history was not updated"
-        )
     if not output_dir.is_dir():
         raise RuntimeError(f"Runner returned success but output is missing: {output_dir}")
 
@@ -664,6 +698,24 @@ def main() -> int:
         help="total successful trials desired, including existing history",
     )
     parser.add_argument("--predictor-interval-ms", type=int, default=10)
+    parser.add_argument(
+        "--trial-interval-sec",
+        type=int,
+        default=30,
+        help="idle time between successful benchmark invocations (default: 30)",
+    )
+    parser.add_argument(
+        "--lock-retry-interval-sec",
+        type=int,
+        default=10,
+        help="delay between retries for runner-marked ARC lock contention",
+    )
+    parser.add_argument(
+        "--lock-retry-timeout-sec",
+        type=int,
+        default=300,
+        help="maximum ARC lock wait per invocation; 0 disables retry",
+    )
     parser.add_argument("--epoch-a", type=int, default=400000)
     parser.add_argument("--epoch-b", type=int, default=400001)
     parser.add_argument("--poll-ms", type=int, default=1)
@@ -680,6 +732,12 @@ def main() -> int:
         parser.error("--target-trials must be positive")
     if args.predictor_interval_ms < 1 or args.poll_ms < 1:
         parser.error("predictor and poll intervals must be positive")
+    if args.trial_interval_sec < 0:
+        parser.error("--trial-interval-sec must be non-negative")
+    if args.lock_retry_interval_sec < 1:
+        parser.error("--lock-retry-interval-sec must be positive")
+    if args.lock_retry_timeout_sec < 0:
+        parser.error("--lock-retry-timeout-sec must be non-negative")
     if maybe_import_sklearn() is None:
         parser.error("scikit-learn is required for the 20-trial Random Forest study")
     valid_gap = {
@@ -762,6 +820,10 @@ def main() -> int:
         f"[study] epoch_pair={args.epoch_a},{args.epoch_b} poll_ms={args.poll_ms} "
         f"auto_swap_order={not args.fixed_order}"
     )
+    print(
+        f"[study] trial_interval_sec={args.trial_interval_sec} "
+        f"lock_retry={args.lock_retry_interval_sec}/{args.lock_retry_timeout_sec}s"
+    )
     if args.suite == "spec":
         print(f"[study] copies={args.copies}")
     print(f"[study] artifact_dir={artifact_dir}")
@@ -821,14 +883,23 @@ def main() -> int:
             candidate_path,
             args.copies,
             trial_number,
+            args.lock_retry_interval_sec,
+            args.lock_retry_timeout_sec,
         )
 
         record = {
             "trial_index": trial_number,
             "proposal_kind": proposal_kind,
             "average_time": average_time,
+            "objective_kind": (
+                "spec_total_seconds_elapsed"
+                if args.suite == "spec"
+                else "gapbs_average_time_all_10_arithmetic"
+            ),
             "return_code": 0,
             "wall_sec": wall_sec,
+            "hostname": os.uname().nodename,
+            "kernel_release": os.uname().release,
             "suite": args.suite,
             "predictor_interval_ms": args.predictor_interval_ms,
             "benchmark": args.benchmark,
@@ -869,6 +940,13 @@ def main() -> int:
                 f"[trial {record['trial_index']}] average_time={average_time:.5f} "
                 f"best={best_record['average_time']:.5f}"
             )
+        if len(history) < args.target_trials and args.trial_interval_sec > 0:
+            print(
+                f"[interval] Waiting {args.trial_interval_sec} seconds before "
+                "the next training invocation.",
+                flush=True,
+            )
+            time.sleep(args.trial_interval_sec)
 
     final_best = min(history, key=lambda item: item["average_time"])
     write_best_run_metadata(best_run_meta_path, final_best)

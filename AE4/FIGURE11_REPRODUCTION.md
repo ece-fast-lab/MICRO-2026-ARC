@@ -292,15 +292,18 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s sw/fig11_spec/tests -v
 
 ## Optional training and LOBO regeneration
 
-Do not run this section for the normal AE path; it is much longer. The two
-entry points below target 20 successful complete executions for one workload:
+Do not run this section for the normal AE path; it is much longer. The GAPBS
+profile driver runs all five supported workloads with 20 successful complete
+invocations each (100 invocations total), validates their histories, and then
+generates the suite-isolated LOBO candidates:
 
 ```bash
-bash sw/ml/run_training_gapbs.sh bc_tw --threshold 16
-bash sw/ml/run_training_spec.sh gcc --threshold 16
+bash sw/ml/run_training_gapbs_all.sh \
+  --threshold 16 --profile current-system all yes
 ```
 
-Allowed GAPBS inputs are `bc_tw`, `bfs_tw`, `cc_tw`, `pr_tw`, and `pr_web`.
-Allowed SPEC inputs are `gcc`, `mcf`, `cactuB`, `cam4`, and `roms`. The same
-scripts accept thresholds 32, 64, and 96. See `sw/ml/README.md` for the full
-suite-isolated LOBO and replacement procedure.
+After an interruption, add `--resume`. The training path requires both Twitter
+and Web graphs, the custom adaptive `perf`, and an ML Python environment. It
+stores the proposed profile separately and never overwrites the shipped Figure
+11 cfgs. See `sw/ml/README.md` for environment creation, progress/status,
+single-workload and SPEC entry points, outputs, and isolated validation.

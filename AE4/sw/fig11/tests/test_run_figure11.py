@@ -427,6 +427,26 @@ class Figure11ShellIntegrationTest(unittest.TestCase):
         self.assertNotEqual(processing_one_method.returncode, 0)
         self.assertIn("requires --method all", processing_one_method.stderr)
 
+        with tempfile.TemporaryDirectory() as model_root:
+            unisolated_model = subprocess.run(
+                [
+                    "bash",
+                    str(FIG11_DIR / "run_figure11.sh"),
+                    "bc_tw",
+                    "--model-root",
+                    model_root,
+                ],
+                cwd=ARTIFACT_DIR,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        self.assertNotEqual(unisolated_model.returncode, 0)
+        self.assertIn(
+            "--model-root requires --result-profile",
+            unisolated_model.stderr,
+        )
+
         for wrapper in (
             "run_fig11_case.sh",
             "run_fig11_all_yes.sh",

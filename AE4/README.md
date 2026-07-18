@@ -100,6 +100,26 @@ complete direction for each workload. See
 [`FIGURE11_REPRODUCTION.md`](FIGURE11_REPRODUCTION.md) for the detailed flow
 and [`sw/ml/README.md`](sw/ml/README.md) for optional retraining.
 
+## Optional current-system retraining
+
+This is not required for Figure 11 reproduction. It runs five GAPBS workloads
+20 times each (100 complete invocations), then proposes a new GAPBS-only LOBO
+configuration profile without modifying the shipped pretrained files:
+
+```bash
+cd MICRO-2026-ARC/AE4
+python3 -m venv "$HOME/.venvs/micro-2026-arc-ml"
+source "$HOME/.venvs/micro-2026-arc-ml/bin/activate"
+python3 -m pip install -r sw/ml/requirements.txt
+bash sw/ml/run_training_gapbs_all.sh \
+  --threshold 16 --profile current-system all yes
+```
+
+After an interruption, rerun the same command with `--resume`. Both the Twitter
+and Web graphs and a working custom `CHMU_PERF_BIN` are required. Full setup,
+status, output, LOBO, and candidate-validation commands are in
+[`sw/ml/README.md`](sw/ml/README.md).
+
 # Appendix: Detailed reference
 
 ## Detailed reviewer workflow
@@ -535,25 +555,32 @@ only from the other GAPBS workloads. The supplied files are based on the
 available accumulated lab histories, whose per-workload counts vary; they are
 not claimed to be exactly 20 trials each.
 
-For optional fresh studies, these entry points target 20 successful executions
-per workload and support thresholds 16, 32, 64, and 96:
+For an optional current-system threshold-16 study, the all-five driver targets
+20 successful complete invocations for each of `bc_tw`, `bfs_tw`, `cc_tw`,
+`pr_tw`, and `pr_web`: 100 optimizer rows in total. It alternates the two epoch
+orders, validates every completed run, and generates the GAPBS-only LOBO output
+after all histories are complete:
 
 ```bash
-bash sw/ml/run_training_gapbs.sh bc_tw --threshold 16
-bash sw/ml/run_training_spec.sh gcc --threshold 16
+bash sw/ml/run_training_gapbs_all.sh \
+  --threshold 16 --profile current-system all yes
 ```
 
-After all five workloads in one suite have exactly 20 successful histories,
-generate suite-isolated LOBO candidates with:
+Resume without discarding completed rows or inspect progress with:
 
 ```bash
-bash sw/ml/generate_lobo_configs.sh gap --threshold 16 --source training
+bash sw/ml/run_training_gapbs_all.sh \
+  --threshold 16 --profile current-system --resume all yes
+bash sw/ml/run_training_gapbs_all.sh \
+  --threshold 16 --profile current-system --status
 ```
 
 The optional offline tools need NumPy, Matplotlib, scikit-learn, and joblib.
-The supplied runtime cfg path needs none of those ML packages; only Matplotlib
-is required to draw the Figure 11 output. Full provenance, workload mappings,
-and the explicit cfg-replacement command are in `sw/ml/README.md`.
+Training uses each invocation's printed all-ten-trial arithmetic `Average Time`;
+this is distinct from Figure 11's 25-value reporting metric. Generated rank-1
+files are proposed candidates and remain below the named result profile. They
+do not overwrite `sw/ml/pretrained`. Full prerequisites, result paths, LOBO
+details, and isolated candidate-validation commands are in `sw/ml/README.md`.
 
 ## Optional selectable SPEC comparison
 

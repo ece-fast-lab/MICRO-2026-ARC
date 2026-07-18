@@ -21,6 +21,9 @@ Options:
   --output-prefix <path>      Output path without .png/.pdf (default:
                               results/figure11/thN/
                               figure11_primary_combined_normalized_performance)
+  --model-root <directory>   Validate results generated with this cfg root
+  --result-profile <name>    Read isolated figure11_profiles/<name> results;
+                             required with --model-root
   --title <text>              Figure title (default includes threshold)
   --dpi <positive-integer>    PNG resolution (default: 300)
   -h, --help                  Show this help
@@ -37,6 +40,8 @@ threshold=16
 output_prefix=""
 title=""
 dpi=300
+model_root=""
+result_profile=""
 while (( $# > 0 )); do
     case "$1" in
         --threshold)
@@ -47,6 +52,16 @@ while (( $# > 0 )); do
         --output-prefix)
             (( $# >= 2 )) || { printf 'ERROR: --output-prefix requires a value\n' >&2; exit 2; }
             output_prefix="$2"
+            shift 2
+            ;;
+        --model-root)
+            (( $# >= 2 )) || { printf 'ERROR: --model-root requires a value\n' >&2; exit 2; }
+            model_root="$2"
+            shift 2
+            ;;
+        --result-profile)
+            (( $# >= 2 )) || { printf 'ERROR: --result-profile requires a value\n' >&2; exit 2; }
+            result_profile="$2"
             shift 2
             ;;
         --title)
@@ -82,6 +97,14 @@ esac
     printf 'ERROR: --dpi must be a positive integer\n' >&2
     exit 2
 }
+[[ -z "$result_profile" || "$result_profile" =~ ^[A-Za-z0-9._-]+$ ]] || {
+    printf 'ERROR: --result-profile has invalid characters\n' >&2
+    exit 2
+}
+if [[ -n "$model_root" && -z "$result_profile" ]]; then
+    printf 'ERROR: --model-root requires --result-profile\n' >&2
+    exit 2
+fi
 
 command -v python3 >/dev/null 2>&1 || {
     printf 'ERROR: python3 is required for Figure 11 plotting.\n' >&2
@@ -109,6 +132,16 @@ EOF
 fi
 
 results_root="${AE4_RESULTS_ROOT:-${ARTIFACT_DIR}/results}"
+run_profile_args=()
+if [[ -n "$result_profile" ]]; then
+    result_namespace="figure11_profiles/${result_profile}"
+    run_profile_args+=(--result-profile "$result_profile")
+else
+    result_namespace=figure11
+fi
+if [[ -n "$model_root" ]]; then
+    run_profile_args+=(--model-root "$model_root")
+fi
 workloads=(bc_tw bfs_tw pr_tw)
 workload_keys=(bc_twitter bfs_twitter pr_twitter)
 
@@ -119,6 +152,7 @@ for workload in "${workloads[@]}"; do
     printf '\n[validate] %s\n' "$workload"
     bash "${SCRIPT_DIR}/run_figure11.sh" "$workload" \
         --threshold "$threshold" \
+        "${run_profile_args[@]}" \
         --method all \
         --skip-benchmark \
         --skip-plot
@@ -129,16 +163,16 @@ done
 # three processing-only validations have succeeded.
 results_root="$(cd -- "$results_root" && pwd)"
 if [[ -z "$output_prefix" ]]; then
-    output_prefix="${results_root}/figure11/th${threshold}/figure11_primary_combined_normalized_performance"
+    output_prefix="${results_root}/${result_namespace}/th${threshold}/figure11_primary_combined_normalized_performance"
 fi
 if [[ -z "$title" ]]; then
     title="Figure 11: GAPBS primary workloads, threshold ${threshold}"
 fi
 
 python3 "${SCRIPT_DIR}/plot_figure11_combined.py" \
-    --input "bc_tw=${results_root}/figure11/th${threshold}/${workload_keys[0]}/figure11_results.csv" \
-    --input "bfs_tw=${results_root}/figure11/th${threshold}/${workload_keys[1]}/figure11_results.csv" \
-    --input "pr_tw=${results_root}/figure11/th${threshold}/${workload_keys[2]}/figure11_results.csv" \
+    --input "bc_tw=${results_root}/${result_namespace}/th${threshold}/${workload_keys[0]}/figure11_results.csv" \
+    --input "bfs_tw=${results_root}/${result_namespace}/th${threshold}/${workload_keys[1]}/figure11_results.csv" \
+    --input "pr_tw=${results_root}/${result_namespace}/th${threshold}/${workload_keys[2]}/figure11_results.csv" \
     --output-prefix "$output_prefix" \
     --title "$title" \
     --dpi "$dpi"
