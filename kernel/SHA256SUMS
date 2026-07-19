@@ -1,0 +1,3 @@
+314eb2f6c16cf2136e0a4df0fefaa2628aae5d7182d8bc9571e91021e483e19d  patches/0001-micro-arc-mig-offload.patch
+20745c0843e064bd76e53bbae0a35e10fe7cb23ba050e255099448a0907e2919  configs/config-6.11.0-mig-offload+
+e30049bc30a5ebec20c1a2651229c048340bee8916779be0fbc38f9844a86ebd  SOURCE_SHA256SUMS

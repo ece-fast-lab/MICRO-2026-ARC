@@ -42,7 +42,9 @@ uname -r
 numactl -H
 ```
 
-Expected kernel: `6.11.0-mig-offload+`.
+Expected kernel: `6.11.0-mig-offload+`. If SPR1 has not already been
+provisioned, follow the separate [custom-kernel guide](../kernel/README.md)
+before starting the reviewer path.
 
 ### 2. Check the external benchmark paths
 
@@ -302,6 +304,9 @@ their names, SHA-256 hashes, and vermagic and therefore does not need a kernel
 build tree. A matching build tree with the non-upstream
 `linux/cxl_migrate.h` interface and `Module.symvers` is required only if the
 bundled modules are absent or invalid and a source fallback build is needed.
+The optional one-time source, build, install, and GRUB procedure is documented
+in the repository's [custom-kernel guide](../kernel/README.md); it is not run
+by `setup_default.sh all`.
 The running kernel command line must contain these exact tokens:
 
 ```text

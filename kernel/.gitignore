@@ -1,0 +1,6 @@
+linux-6.11/
+linux-6.11-arc/
+linux-6.11-arc-build/
+build/
+work/
+*.deb

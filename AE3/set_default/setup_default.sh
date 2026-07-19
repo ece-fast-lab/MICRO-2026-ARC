@@ -301,7 +301,7 @@ check_requirements() {
             missing=1
         else
             local symbol
-            for symbol in cxl_pa_migrate reset_cxl_stats print_cxl_stats; do
+            for symbol in cxl_pa_migrate cxl_stats; do
                 if ! grep -qw "${symbol}" "${KERNEL_BUILD}/Module.symvers"; then
                     warn "custom kernel symbol is absent from Module.symvers: ${symbol}"
                     missing=1
