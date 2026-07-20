@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+
+# Runner output — expected_*.png are the shipped references and stay tracked.
+trace_analysis/figure*/generated_*.png

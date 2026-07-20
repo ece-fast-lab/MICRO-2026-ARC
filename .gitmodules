@@ -1,0 +1,4 @@
+[submodule "AE1/cxl-tracer"]
+	path = AE1/cxl-tracer
+	url = https://github.com/ece-fast-lab/cxl-tracer
+	branch = MICRO_2026_ARC_artifact

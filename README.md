@@ -7,15 +7,17 @@ It includes the custom RTL, FPGA images, host software, experiment scripts, and 
 
 | Directory | Experiment |
 |---|---|
-| `AE1/` | Separate RTL simulation workflow for access-distribution and hot-page analysis. |
+| [`AE1/`](AE1/) | Figures 2, 5, 7: per-page access-distribution and hot-page analysis from bundled CXL traces. Software-only (`python3`), no FPGA or SPR1 host. |
 | [`AE2/`](AE2/) | Figure 4: memory usage and migration traffic for SPEC CPU2017 `gcc`. |
 | [`AE3/`](AE3/) | Figure 3: CXL-only, AutoNUMA, DAMON, CHMU-Cache, and CHMU-CMS comparison. |
 | [`AE4/`](AE4/) | Figure 11: static CHMU policies and ARC adaptive selection. |
 | [`kernel/`](kernel/) | Optional reconstruction of the `6.11.0-mig-offload+` kernel. |
 | [`rtl/`](rtl/) | Custom ARC SystemVerilog sources. |
 
-AE2, AE3, and AE4 contain the hardware workflows available in this checkout.
-AE1 is maintained as a separate simulation artifact.
+AE2, AE3, and AE4 are the hardware workflows in this checkout. AE1 is a
+software-only trace-analysis artifact and needs no SPR1 host or FPGA; it bundles
+the derived CSVs and references the CXL-Tracer collection framework as a
+submodule, initialized with `git submodule update --init --recursive`.
 
 ## Requirements
 
