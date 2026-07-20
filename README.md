@@ -7,6 +7,7 @@ in each artifact directory:
 
 | Artifact | Reviewer guide |
 |---|---|
+| ARC custom RTL source | [rtl/README.md](rtl/README.md) |
 | Kernel provisioning (optional) | [kernel/README.md](kernel/README.md) |
 | AE2 | [AE2/README.md](AE2/README.md) |
 | AE3 | [AE3/README.md](AE3/README.md) |
@@ -33,4 +34,6 @@ entry points intentionally share one host-wide lock because they control the
 same SPR1 PCI device, modules, cgroup, and CPU/NUMA state.
 
 The repository's MIT license does not relicense the Linux/M5-derived material
-under `kernel/`; see [`kernel/THIRD_PARTY_NOTICES.md`](kernel/THIRD_PARTY_NOTICES.md).
+under `kernel/` or the Intel/component-licensed material under `rtl/`; see
+[`kernel/THIRD_PARTY_NOTICES.md`](kernel/THIRD_PARTY_NOTICES.md) and
+[`rtl/THIRD_PARTY_NOTICES.md`](rtl/THIRD_PARTY_NOTICES.md).
