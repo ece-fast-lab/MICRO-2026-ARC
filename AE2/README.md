@@ -17,18 +17,15 @@ AE2 reproduces Figure 4 for SPEC CPU2017 `gcc` at CHMU thresholds 32 and 96 and 
 
 ## Prerequisites
 
-Use the dedicated SPR1 host with PCI device `8086:0ddb`, Node 0 as Local memory, and Node 1 as CXL memory.
-Run all commands from the reviewer account because the scripts invoke `sudo` only for privileged operations.
-Do not use `sudo -i` or prefix an entire command with `sudo`.
-Install SPEC CPU2017 separately because it is not included in this artifact.
+Use the dedicated AE host with PCI device `8086:0ddb`, Node 0 as Local memory, and Node 1 as CXL memory. Run all commands from the reviewer account because the scripts invoke `sudo` only for privileged operations. Do not use `sudo -i` or prefix an entire command with `sudo`. Install SPEC CPU2017 separately because it is not included in this artifact.
 
-SPR1 must run kernel `6.11.0-mig-offload+` with these boot arguments:
+The AE host must run kernel `6.11.0-mig-offload+` with these boot arguments:
 
 ```text
 intel_iommu=on,sm_on iommu=pt no5lvl efi=nosoftreserve memmap=124G$0x180000000
 ```
 
-Use the [custom-kernel guide](../kernel/README.md) if SPR1 has not been provisioned.
+Use the [custom-kernel guide](../kernel/README.md) if the target host has not been provisioned.
 
 ## Reproduce Figure 4
 
@@ -44,8 +41,7 @@ bash program_script/update_cdf_paths.sh
 bash program_script/program_spr1.sh chmu_ae_merge_SPL1.cdf
 ```
 
-Ask the authorized system operator to power-cycle SPR1 because BMC credentials are not included.
-Reconnect after SPR1 finishes booting, and verify the kernel and NUMA topology:
+Ask the authorized system operator to power-cycle the AE host because BMC credentials are not included. Reconnect after the target host finishes booting, and verify the kernel and NUMA topology:
 
 ```bash
 uname -r
@@ -56,7 +52,7 @@ numactl -H
 
 ### 2. Set the SPEC CPU2017 paths
 
-Edit this file on SPR1:
+Edit this file on the target host:
 
 ```text
 sw/config/benchmark_paths.env
@@ -64,13 +60,13 @@ sw/config/benchmark_paths.env
 
 Set `SPEC_ROOT`, `SPEC_RUNCPU`, and the absolute `SPEC_CONFIG` path.
 
-### 3. Configure SPR1
+### 3. Configure the target host
 
 ```bash
 bash set_default/setup_default.sh all
 ```
 
-This command configures SPR1 but does not start the benchmark.
+This command configures the target host but does not start the benchmark.
 
 ### 4. Collect threshold 32 and 96 data
 
@@ -79,8 +75,7 @@ This command configures SPR1 but does not start the benchmark.
 ./sw/build_option_th96/run_fig4_th96.sh all yes --skip-plot
 ```
 
-Each command runs `gcc`, converts `debug_monitor.log`, and skips Matplotlib plotting.
-If a result already exists, the command moves it to `.bak` or `.bak.N` before rerunning.
+Each command runs `gcc`, converts `debug_monitor.log`, and skips Matplotlib plotting. If a result already exists, the command moves it to `.bak` or `.bak.N` before rerunning.
 
 ### 5. Plot the existing logs
 
@@ -113,10 +108,7 @@ Each directory contains these primary files:
 | `memory_usage_migration_traffic.png` | 300-DPI plot |
 | `memory_usage_migration_traffic.pdf` | Vector plot |
 
-The plot reports Node 0 as Local Memory, Node 1 as CXL Memory, and migration traffic from `pgmigrate_success` with a 4 KiB page size.
-Collect data while SPR1 is idle because the input counters are system-wide.
-Threshold 32 should show more frequent migration traffic than threshold 96.
-The plotter uses axis maxima of at least 1000 s, 8 GiB, and 800 MB/s.
+The plot reports Node 0 as Local Memory, Node 1 as CXL Memory, and migration traffic from `pgmigrate_success` with a 4 KiB page size. Collect data while the AE host is idle because the input counters are system-wide. Threshold 32 should show more frequent migration traffic than threshold 96. The plotter uses axis maxima of at least 1000 s, 8 GiB, and 800 MB/s.
 
 ## Troubleshooting
 
@@ -126,14 +118,14 @@ Run the preflight check before changing host state:
 bash set_default/setup_default.sh check
 ```
 
-If platform detection is ambiguous, provide the SPR1 values explicitly:
+If platform detection is ambiguous, provide the reference-platform values explicitly:
 
 ```bash
 PCIE_BDF=0000:40:00.1 CXL_NODE=1 BUFFER_NODE=0 \
   bash set_default/setup_default.sh all
 ```
 
-If `apply` fails, reboot SPR1 before collecting results.
+If `apply` fails, reboot the target host before collecting results.
 
 If Matplotlib is unavailable, install `sw/fig4/requirements.txt` in an isolated Python environment and rerun the plotting commands.
 

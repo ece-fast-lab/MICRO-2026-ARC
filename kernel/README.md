@@ -1,10 +1,8 @@
 # MICRO 2026 ARC custom kernel
 
-This directory reconstructs the SPR1 kernel from Linux v6.11, the ARC patch, and the installed configuration.
-The expected release is `6.11.0-mig-offload+`.
+This directory reconstructs the custom AE kernel from Linux v6.11, the ARC patch, and the installed configuration. The expected release is `6.11.0-mig-offload+`.
 
-Kernel installation is a one-time administrator task.
-Skip this document when SPR1 already runs the expected kernel because AE2–AE4 use validated prebuilt modules.
+Kernel installation is a one-time administrator task. Skip this document when the target host already runs the expected kernel because AE2–AE4 use validated prebuilt modules.
 
 ## Reproduction inputs
 
@@ -21,9 +19,7 @@ Skip this document when SPR1 already runs the expected kernel because AE2–AE4 
 | Installed `System.map` SHA-256 | `883be01d8e73807d403aeb00ac090151e677f3948768177dc25250e20920c912` |
 | Known-good build host | Ubuntu 24.04.3, GCC 13.3.0, binutils 2.42 |
 
-The installed `.config`, `bzImage`, and `System.map` matched the original source tree byte for byte.
-A new image may have a different hash because timestamps, build paths, signing keys, and toolchain details enter the output.
-The scripts verify the patch, configuration, release name, and required ABI.
+The installed `.config`, `bzImage`, and `System.map` matched the original source tree byte for byte. A new image may have a different hash because timestamps, build paths, signing keys, and toolchain details enter the output. The scripts verify the patch, configuration, release name, and required ABI.
 
 | Path | Purpose |
 |---|---|
@@ -47,20 +43,17 @@ sudo apt-get install build-essential bc bison flex libssl-dev libelf-dev \
   initramfs-tools grub2-common debianutils
 ```
 
-Reserve at least 40 GiB for the source and out-of-tree build.
-The upstream [kernel build guide](https://www.kernel.org/doc/html/latest/admin-guide/quickly-build-trimmed-linux.html) provides additional background.
+Reserve at least 40 GiB for the source and out-of-tree build. The upstream [kernel build guide](https://www.kernel.org/doc/html/latest/admin-guide/quickly-build-trimmed-linux.html) provides additional background.
 
 ## 2. Prepare the source
 
-Run the preparation script from the MICRO-2026-ARC repository.
-The destination directory must not exist.
+Run the preparation script from the MICRO-2026-ARC repository. The destination directory must not exist.
 
 ```bash
 bash kernel/scripts/prepare_source.sh /path/to/linux-6.11-arc
 ```
 
-The script clones the official `v6.11` tag, verifies its commit, checks the supplied hashes, and applies the ARC patch.
-The patch remains staged against `v6.11` for review with `git diff v6.11`.
+The script clones the official `v6.11` tag, verifies its commit, checks the supplied hashes, and applies the ARC patch. The patch remains staged against `v6.11` for review with `git diff v6.11`.
 
 ## 3. Build the kernel
 
@@ -72,10 +65,7 @@ JOBS="$(nproc)" bash kernel/scripts/build_kernel.sh \
   /path/to/linux-6.11-arc-build
 ```
 
-The script installs the supplied config and runs `olddefconfig`.
-It requires `CONFIG_M5=y`, the migration options, and the CXL options used by ARC.
-Only a toolchain-derived change to `CONFIG_CC_VERSION_TEXT` is accepted.
-`LOCALVERSION=+` and the patched `EXTRAVERSION=-mig-offload` produce the expected release name.
+The script installs the supplied config and runs `olddefconfig`. It requires `CONFIG_M5=y`, the migration options, and the CXL options used by ARC. Only a toolchain-derived change to `CONFIG_CC_VERSION_TEXT` is accepted. `LOCALVERSION=+` and the patched `EXTRAVERSION=-mig-offload` produce the expected release name.
 
 The build must produce `bzImage`, `System.map`, `Module.symvers`, and these exported symbols:
 
@@ -85,16 +75,13 @@ cxl_stats
 migrate_folio_sync_offload
 ```
 
-`reset_cxl_stats()` and `print_cxl_stats()` are header-only helpers and do not appear in `Module.symvers`.
-GCC 13.3 reports known warnings in the captured custom sources, but the verified objects compile successfully.
+`reset_cxl_stats()` and `print_cxl_stats()` are header-only helpers and do not appear in `Module.symvers`. GCC 13.3 reports known warnings in the captured custom sources, but the verified objects compile successfully.
 
-The configuration generates a local module-signing key.
-Keep the build directory for external-module builds, but never publish `certs/signing_key.pem` or another private key.
+The configuration generates a local module-signing key. Keep the build directory for external-module builds, but never publish `certs/signing_key.pem` or another private key.
 
 ## 4. Install the kernel
 
-Keep a known-good bootable kernel installed before continuing.
-Skip installation when `/boot/vmlinuz-6.11.0-mig-offload+` and its module tree already exist.
+Keep a known-good bootable kernel installed before continuing. Skip installation when `/boot/vmlinuz-6.11.0-mig-offload+` and its module tree already exist.
 
 ```bash
 bash kernel/scripts/install_kernel.sh \
@@ -102,22 +89,15 @@ bash kernel/scripts/install_kernel.sh \
   /path/to/linux-6.11-arc-build
 ```
 
-The installer does not overwrite an existing image, initrd, or module tree.
-It also stops when Secure Boot is enabled and the new kernel is unsigned.
-It installs the modules and image and regenerates the initrd and GRUB menu.
-It does not change `GRUB_DEFAULT` or reboot the host.
+The installer does not overwrite an existing image, initrd, or module tree. It also stops when Secure Boot is enabled and the new kernel is unsigned. It installs the modules and image and regenerates the initrd and GRUB menu. It does not change `GRUB_DEFAULT` or reboot the host.
 
-If installation is interrupted, inspect the partial files from a fallback kernel.
-Remove or move them only after confirming that the running kernel does not use them.
-Then rerun the installer.
+If installation is interrupted, inspect the partial files from a fallback kernel. Remove or move them only after confirming that the running kernel does not use them. Then rerun the installer.
 
-Keep both the source and build directories.
-See the [external modules guide](https://www.kernel.org/doc/html/latest/kbuild/modules.html) for the Kbuild interface.
+Keep both the source and build directories. See the [external modules guide](https://www.kernel.org/doc/html/latest/kbuild/modules.html) for the Kbuild interface.
 
 ## 5. Test the GRUB entry
 
-Do not use a numeric GRUB entry because menu positions change after kernel updates.
-Back up the current configuration and inspect the generated titles.
+Do not use a numeric GRUB entry because menu positions change after kernel updates. Back up the current configuration and inspect the generated titles.
 
 ```bash
 sudo cp -a /etc/default/grub "/etc/default/grub.before-micro-arc.$(date +%Y%m%d-%H%M%S)"
@@ -132,19 +112,16 @@ sudo install -d -m 0755 /etc/default/grub.d
 sudoedit /etc/default/grub.d/99-micro-2026-arc.cfg
 ```
 
-Use the current kernel as the fallback and set the required command line.
-Replace `<CURRENT_RELEASE>` with the output of `uname -r`.
+Use the current kernel as the fallback and set the required command line. Replace `<CURRENT_RELEASE>` with the output of `uname -r`.
 
 ```text
 GRUB_DEFAULT="Advanced options for GNU/Linux>GNU/Linux, with Linux <CURRENT_RELEASE>"
 GRUB_CMDLINE_LINUX_DEFAULT='quiet intel_iommu=on,sm_on iommu=pt no5lvl splash efi=nosoftreserve memmap=124G\$0x180000000'
 ```
 
-Keep the backslash before `$` in the GRUB defaults file.
-After boot, `/proc/cmdline` must contain `memmap=124G$0x180000000` without the backslash.
+Keep the backslash before `$` in the GRUB defaults file. After boot, `/proc/cmdline` must contain `memmap=124G$0x180000000` without the backslash.
 
-Confirm console or BMC recovery access before rebooting.
-Then select the ARC kernel for one boot.
+Confirm console or BMC recovery access before rebooting. Then select the ARC kernel for one boot.
 
 ```bash
 sudo update-grub
@@ -154,8 +131,7 @@ sudo grub-editenv list
 sudo reboot
 ```
 
-`grub-editenv list` should show the requested `next_entry`.
-Do not use this method when GRUB cannot update its environment block, including some LVM and MDRAID layouts.
+`grub-editenv list` should show the requested `next_entry`. Do not use this method when GRUB cannot update its environment block, including some LVM and MDRAID layouts.
 
 Verify the host after reconnecting.
 
@@ -185,20 +161,14 @@ Verification also checks CPUs `0-31` on NUMA node 0, memory-only NUMA node 1, NU
 
 ## Recovery
 
-Select the retained fallback kernel from **Advanced options for GNU/Linux** if the ARC kernel does not boot.
-Restore the timestamped GRUB backup or remove the ARC drop-in.
-Run `sudo update-grub` before rebooting again.
+Select the retained fallback kernel from **Advanced options for GNU/Linux** if the ARC kernel does not boot. Restore the timestamped GRUB backup or remove the ARC drop-in. Run `sudo update-grub` before rebooting again.
 
 ## Patch scope and M5 lineage
 
-The patch changes 15 paths under the kernel `Makefile`, `drivers/m5`, migration headers, `mm/damon`, and the Linux memory-management subsystem.
-The complete list is recorded in `SOURCE_SHA256SUMS` and the patch itself.
+The patch changes 15 paths under the kernel `Makefile`, `drivers/m5`, migration headers, `mm/damon`, and the Linux memory-management subsystem. The complete list is recorded in `SOURCE_SHA256SUMS` and the patch itself.
 
-The migration implementation derives in part from the public [ASPLOS 2025 M5 kernel materials](https://github.com/ece-fast-lab/ASPLOS-2025-M5/tree/96da2c2b26c39f59987a145e61ab944b4c87f536/kernels).
-M5's standalone [`6.11_changes/paddr.c`](https://github.com/ece-fast-lab/ASPLOS-2025-M5/blob/96da2c2b26c39f59987a145e61ab944b4c87f536/kernels/6.11_changes/paddr.c) implements a different DAMON-PAC experiment.
-The supplied patch therefore captures the verified ARC source instead of combining M5 files during installation.
+The migration implementation derives in part from the public [ASPLOS 2025 M5 kernel materials](https://github.com/ece-fast-lab/ASPLOS-2025-M5/tree/96da2c2b26c39f59987a145e61ab944b4c87f536/kernels). M5's standalone [`6.11_changes/paddr.c`](https://github.com/ece-fast-lab/ASPLOS-2025-M5/blob/96da2c2b26c39f59987a145e61ab944b4c87f536/kernels/6.11_changes/paddr.c) implements a different DAMON-PAC experiment. The supplied patch therefore captures the verified ARC source instead of combining M5 files during installation.
 
 ## License
 
-The repository MIT license does not relicense Linux or M5-derived code.
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), [`COPYING`](COPYING), and the files under `LICENSES/`.
+The repository MIT license does not relicense Linux or M5-derived code. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), [`COPYING`](COPYING), and the files under `LICENSES/`.

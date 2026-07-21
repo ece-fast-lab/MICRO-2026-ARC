@@ -1,7 +1,6 @@
-# Figure 11 reproduction on SPR1
+# Figure 11 reproduction on the AE host
 
-This procedure starts after the SPL1 image is programmed, SPR1 is rebooted, and `set_default/setup_default.sh all` completes.
-The main result uses the supplied pretrained configuration.
+This procedure starts after the SPL1 image is programmed, the target host is rebooted, and `set_default/setup_default.sh all` completes. The main result uses the supplied pretrained configuration.
 
 ## Reported methods
 
@@ -13,8 +12,7 @@ The main result uses the supplied pretrained configuration.
 | Adaptive candidate 1 | Dynamic Cache/CMS; starts from Cache | `400000/400001` |
 | Adaptive candidate 2 | Dynamic Cache/CMS; starts from CMS | `400001/400000` |
 
-Adaptive evaluates both initial epoch orders with the same workload cfg.
-The faster complete direction becomes the reported Adaptive bar.
+Adaptive evaluates both initial epoch orders with the same workload cfg. The faster complete direction becomes the reported Adaptive bar.
 
 ## Run the primary workloads
 
@@ -31,8 +29,7 @@ Run all three primary workloads:
 bash sw/fig11/run_all_primary_th16.sh
 ```
 
-The scripts collect data and CSV files without importing Matplotlib.
-New benchmark invocations are separated by 30 seconds.
+The scripts collect data and CSV files without importing Matplotlib. New benchmark invocations are separated by 30 seconds.
 
 ## Run one method at a time
 
@@ -45,19 +42,13 @@ bash sw/fig11/run_fig11_case.sh bc_tw cms      --threshold 16
 bash sw/fig11/run_fig11_case.sh bc_tw adaptive --threshold 16
 ```
 
-The `adaptive` case runs both `400000/400001` and `400001/400000`.
-Run `bash sw/fig11/run_fig11_case.sh --help` for diagnostic selectors and other options.
+The `adaptive` case runs both `400000/400001` and `400001/400000`. Run `bash sw/fig11/run_fig11_case.sh --help` for diagnostic selectors and other options.
 
 ## Sampling and normalization
 
-Each static method uses five independent GAPBS invocations.
-Each Adaptive direction also uses five independent invocations.
-Every invocation must contain exactly ten `Trial Time` values.
-The collector keeps Trial Time positions 6–10 from each invocation.
-This gives 25 samples for each static method and 25 samples for each Adaptive direction.
+Each static method uses five independent GAPBS invocations. Each Adaptive direction also uses five independent invocations. Every invocation must contain exactly ten `Trial Time` values. The collector keeps Trial Time positions 6–10 from each invocation. This gives 25 samples for each static method and 25 samples for each Adaptive direction.
 
-The collector computes a geometric-mean execution time for each Adaptive direction.
-It reports the direction with the lower geometric mean.
+The collector computes a geometric-mean execution time for each Adaptive direction. It reports the direction with the lower geometric mean.
 
 Normalized performance is:
 
@@ -95,8 +86,7 @@ env PYTHONNOUSERSITE=1 \
   bash sw/fig11/plot_fig11_primary_combined.sh --threshold 16
 ```
 
-The `GeoMean` group is computed separately for each method from its three normalized-performance values.
-Adaptive direction selection occurs before the cross-workload geometric mean is calculated.
+The `GeoMean` group is computed separately for each method from its three normalized-performance values. Adaptive direction selection occurs before the cross-workload geometric mean is calculated.
 
 Per-workload results are stored below:
 
@@ -134,9 +124,7 @@ The optional SPEC path accepts `gcc`, `mcf`, `cactuB`, `cam4`, or `roms`:
 bash sw/run_figure11_benchmark.sh spec gcc --threshold 16 --skip-plot
 ```
 
-SPEC results are stored below `results/figure11_optional_spec/th16/<SPEC-ID>/`.
-Local-only is omitted because it requires a different boot-time memory map with more capacity on NUMA Node 0.
-Optional configuration training is documented in [`sw/ml/README.md`](sw/ml/README.md).
+SPEC results are stored below `results/figure11_optional_spec/th16/<SPEC-ID>/`. Local-only is omitted because it requires a different boot-time memory map with more capacity on NUMA Node 0. Optional configuration training is documented in [`sw/ml/README.md`](sw/ml/README.md).
 
 ## Troubleshooting
 

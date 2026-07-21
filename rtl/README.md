@@ -1,8 +1,6 @@
 # ARC custom RTL
 
-This directory contains the eight custom SystemVerilog files used by ARC.
-Their source-relative hierarchy is preserved below `rtl/`.
-Intel CXL example-design packages, generated IP, Quartus files, and build outputs are not included.
+This directory contains the eight custom SystemVerilog files used by ARC. Their source-relative hierarchy is preserved below `rtl/`. Intel CXL example-design packages, generated IP, Quartus files, and build outputs are not included.
 
 ## Hierarchy
 
@@ -17,10 +15,7 @@ afu_top
         └── hotlist
 ```
 
-`afu_top` passes the memory-controller AXI channels through and monitors channel 0.
-The tracker updates the LFU and Count-Min Sketch structures in parallel.
-`counter_mode=0` selects LFU, and `counter_mode=1` selects Count-Min Sketch.
-Pages that reach the threshold are sent to `hotlist` for migration.
+`afu_top` passes the memory-controller AXI channels through and monitors channel 0. The tracker updates the LFU and Count-Min Sketch structures in parallel. `counter_mode=0` selects LFU, and `counter_mode=1` selects Count-Min Sketch. Pages that reach the threshold are sent to `hotlist` for migration.
 
 ## Files
 
@@ -37,8 +32,7 @@ Pages that reach the threshold are sent to `hotlist` for migration.
 
 ## External requirements
 
-These files are not a standalone Quartus project.
-The Intel development environment must provide:
+These files are not a standalone Quartus project. The Intel development environment must provide:
 
 - `ed_cxlip_top_pkg`, `ed_mc_axi_if_pkg`, and the CXL Type-2 definitions.
 - The `fifo_w32_d256` and `port_2_ram` IP implementations.
@@ -48,6 +42,4 @@ Use the supplied POF files for AE2–AE4 execution.
 
 ## Licensing
 
-Original source headers are preserved.
-`lfu_3cycle_counter_set.sv` carries an Apache-2.0 notice, and `afu_top.sv` retains its Intel-derived header.
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistribution.
+Original source headers are preserved. `lfu_3cycle_counter_set.sv` carries an Apache-2.0 notice, and `afu_top.sv` retains its Intel-derived header. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistribution.

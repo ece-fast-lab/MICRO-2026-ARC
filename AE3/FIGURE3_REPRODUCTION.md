@@ -1,6 +1,6 @@
 # Figure 3 Reproduction and Optional Studies
 
-Start after programming the SPL1 image, power-cycling SPR1, and running `set_default/setup_default.sh all` from the reviewer account.
+Start after programming the SPL1 image, power-cycling the AE host, and running `set_default/setup_default.sh all` from the reviewer account.
 
 ## Figure 3 cases
 
@@ -12,9 +12,7 @@ Start after programming the SPL1 image, power-cycling SPR1, and running `set_def
 | 4–7 | Cache-16/32/64/96 | `mig` | 16/32/64/96 | `400000/400000` | CHMU-Cache |
 | 8–11 | CMS-16/32/64/96 | `mig` | 16/32/64/96 | `400001/400001` | CHMU-CMS |
 
-The primary workload is GAPBS PageRank with the Twitter graph (`pr_tw`).
-The workload uses CPUs 0–7, and the manager uses CPU 20.
-The manager polling interval is 1 ms.
+The primary workload is GAPBS PageRank with the Twitter graph (`pr_tw`). The workload uses CPUs 0–7, and the manager uses CPU 20. The manager polling interval is 1 ms.
 
 ## Run all cases
 
@@ -61,15 +59,11 @@ Replacing a result moves the previous output to the next `.bak` path.
 
 ### GAPBS
 
-The parser requires exactly 10 complete `Trial Time:` records.
-It computes the geometric mean of records 6–10.
-The GAPBS `Average Time` field is not used.
+The parser requires exactly 10 complete `Trial Time:` records. It computes the geometric mean of records 6–10. The GAPBS `Average Time` field is not used.
 
 ### SPEC CPU2017
 
-The parser requires a standalone `Run Complete` record.
-It uses the single `; N total seconds elapsed` record.
-Eight SPECrate copies form one run and are not treated as repeated trials.
+The parser requires a standalone `Run Complete` record. It uses the single `; N total seconds elapsed` record. Eight SPECrate copies form one run and are not treated as repeated trials.
 
 ### Normalization
 
@@ -98,8 +92,7 @@ GAPBS selectors are `bc_tw`, `bfs_tw`, `cc_tw`, `pr_tw`, `bc_web`, `bfs_web`, `c
 
 For example, run `bash sw/fig3/run_fig3_gapbs.sh bc_tw --skip-plot`.
 
-Optional SPEC IDs are 502 (`gcc_r`), 505 (`mcf_r`), 507 (`cactuBSSN_r`), 527 (`cam4_r`), and 554 (`roms_r`).
-For example, run `bash sw/fig3/run_fig3_spec.sh 502 --skip-plot`.
+Optional SPEC IDs are 502 (`gcc_r`), 505 (`mcf_r`), 507 (`cactuBSSN_r`), 527 (`cam4_r`), and 554 (`roms_r`). For example, run `bash sw/fig3/run_fig3_spec.sh 502 --skip-plot`.
 
 ## Optional Figure 6 epoch sweep
 
@@ -112,14 +105,13 @@ Figure 6 uses SPL1, threshold 64, and a 1 ms manager polling interval.
 | 100 ms | `40000000` | `40000001` |
 | 1000 ms | `400000000` | `400000001` |
 
-Run `bash sw/fig6/run_fig6_epoch_gapbs.sh pr twitter` for GAPBS.
-Run `bash sw/fig6/run_fig6_epoch_spec.sh 502 --resume` for SPEC.
+Run `bash sw/fig6/run_fig6_epoch_gapbs.sh pr twitter` for GAPBS. Run `bash sw/fig6/run_fig6_epoch_spec.sh 502 --resume` for SPEC.
 
 Use `--method cache|cms|both` and `--epoch 1|10|100|1000|all` to select points.
 
 ## Optional sampling-ratio study
 
-Program the matching image, power-cycle SPR1, and rerun setup before each sampling run.
+Program the matching image, power-cycle the AE host, and rerun setup before each sampling run.
 
 | Image | POF | Sampling | Default GAPBS threshold |
 |---|---|---:|---:|
@@ -127,8 +119,7 @@ Program the matching image, power-cycle SPR1, and rerun setup before each sampli
 | SPL2 | `chmu_ae_merge_SPL2.pof` | 1/2 accesses | 32 |
 | SPL4 | `chmu_ae_merge_SPL4.pof` | 1/4 accesses | 16 |
 
-Run `bash sw/optional/run_sampling_gapbs.sh pr twitter --sampling spl2` for GAPBS.
-Run `bash sw/optional/run_sampling_spec.sh 502 --sampling spl4 --threshold 16 --method both` for SPEC.
+Run `bash sw/optional/run_sampling_gapbs.sh pr twitter --sampling spl2` for GAPBS. Run `bash sw/optional/run_sampling_spec.sh 502 --sampling spl4 --threshold 16 --method both` for SPEC.
 
 SPEC sampling requires an explicit threshold of 16, 32, 64, or 96.
 

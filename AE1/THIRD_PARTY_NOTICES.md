@@ -1,7 +1,6 @@
 # Third-party and component notices
 
-The repository-level MIT license does not replace licenses or notices embedded
-in copied components.
+The repository-level MIT license does not replace licenses or notices embedded in copied components.
 
 | Component | Notice |
 |---|---|
@@ -13,5 +12,4 @@ in copied components.
 | SPEC CPU2017 | Not included. The `spec_502_gcc_r_c8` inputs are derived counts; the benchmark itself requires a separately licensed installation. |
 | GAPBS and graph datasets | Not included. The `gapbs_*_twitter` inputs are derived counts; reviewers must provide the benchmark and datasets under the applicable licenses. |
 
-Keep all original source headers and license texts when redistributing the
-artifact.
+Keep all original source headers and license texts when redistributing the artifact.

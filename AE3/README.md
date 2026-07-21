@@ -14,22 +14,17 @@ AE3 reproduces Figure 3 with GAPBS PageRank on the Twitter graph (`pr_tw`).
 
 ## Prerequisites
 
-Use the dedicated SPR1 server with exclusive access during setup and measurement.
-Run every command from the reviewer account, not from `sudo -i`.
-The scripts request `sudo` only for privileged host controls.
+Use the dedicated AE host with exclusive access during setup and measurement. Run every command from the reviewer account, not from `sudo -i`. The scripts request `sudo` only for privileged host controls.
 
-SPR1 must run the `6.11.0-mig-offload+` kernel with two visible NUMA nodes.
+The AE host must run the `6.11.0-mig-offload+` kernel with two visible NUMA nodes.
 
 ```text
 intel_iommu=on,sm_on iommu=pt no5lvl efi=nosoftreserve memmap=124G$0x180000000
 ```
 
-The setup script checks the remaining host packages and the bundled kernel modules.
-See the [custom-kernel guide](../kernel/README.md) if SPR1 has not been provisioned.
+The setup script checks the remaining host packages and the bundled kernel modules. See the [custom-kernel guide](../kernel/README.md) if the target host has not been provisioned.
 
-GAPBS, graph data, SPEC CPU2017, and `damo` are not distributed with this artifact.
-ANB is provided by the SPR1 Linux kernel.
-NumPy and Matplotlib are required only for plotting.
+GAPBS, graph data, SPEC CPU2017, and `damo` are not distributed with this artifact. ANB support is provided by the custom Linux kernel. NumPy and Matplotlib are required only for plotting.
 
 ## 1. Program the SPL1 FPGA image
 
@@ -42,10 +37,9 @@ bash program_script/update_cdf_paths.sh
 bash program_script/program_spr1.sh chmu_ae_merge_SPL1.cdf
 ```
 
-Power-cycle SPR1 with the command supplied by the system operator.
-BMC credentials and the power-cycle command are not included in this repository.
+Power-cycle the target host with the command supplied by the system operator. BMC credentials and the power-cycle command are not included in this repository.
 
-After SPR1 boots, verify the kernel and NUMA topology:
+After the AE host boots, verify the kernel and NUMA topology:
 
 ```bash
 uname -r
@@ -60,12 +54,9 @@ Review the absolute paths in:
 AE3/sw/config/benchmark_paths.env
 ```
 
-The primary run needs `GAPBS_ROOT`, the Twitter graph, `DAMO_BIN`, and `DAMO_CONFIG`.
-The optional SPEC runs also need `SPEC_ROOT`, `SPEC_RUNCPU`, and `SPEC_CONFIG`.
-See the [ASPLOS-2025-M5 software guide](https://github.com/ece-fast-lab/ASPLOS-2025-M5/blob/main/sw/README.md) for the SPR1 DAMON setup.
-The DAMON source link is in its [`sw/damo` directory](https://github.com/ece-fast-lab/ASPLOS-2025-M5/tree/main/sw/damo).
+The primary run needs `GAPBS_ROOT`, the Twitter graph, `DAMO_BIN`, and `DAMO_CONFIG`. The optional SPEC runs also need `SPEC_ROOT`, `SPEC_RUNCPU`, and `SPEC_CONFIG`. See the [ASPLOS-2025-M5 software guide](https://github.com/ece-fast-lab/ASPLOS-2025-M5/blob/main/sw/README.md) for the reference-host DAMON installation. The DAMON source link is in its [`sw/damo` directory](https://github.com/ece-fast-lab/ASPLOS-2025-M5/tree/main/sw/damo).
 
-## 3. Configure SPR1
+## 3. Configure the AE host
 
 Run setup from the AE3 directory:
 
@@ -74,8 +65,7 @@ cd MICRO-2026-ARC/AE3
 bash set_default/setup_default.sh all
 ```
 
-Setup checks the platform, builds the four threshold managers, loads the modules, and initializes CHMU.
-It does not start a benchmark.
+Setup checks the platform, builds the four threshold managers, loads the modules, and initializes CHMU. It does not start a benchmark.
 
 ## 4. Collect Figure 3 data
 
@@ -86,8 +76,7 @@ cd MICRO-2026-ARC/AE3
 bash sw/fig3/run_fig3_all_yes.sh
 ```
 
-The script waits 30 seconds between newly executed cases.
-It skips plotting so data collection does not depend on Matplotlib.
+The script waits 30 seconds between newly executed cases. It skips plotting so data collection does not depend on Matplotlib.
 
 Use `--resume` after an interruption:
 
@@ -95,12 +84,11 @@ Use `--resume` after an interruption:
 bash sw/fig3/run_fig3_all_yes.sh --resume
 ```
 
-Completed cases are reused.
-See [Figure 3 reproduction](FIGURE3_REPRODUCTION.md) for individual cases and replacement behavior.
+Completed cases are reused. See [Figure 3 reproduction](FIGURE3_REPRODUCTION.md) for individual cases and replacement behavior.
 
 ## 5. Plot existing data
 
-Use the Ubuntu system packages on SPR1:
+Use the Ubuntu system packages on the AE host:
 
 ```bash
 cd MICRO-2026-ARC/AE3
@@ -137,9 +125,7 @@ results/figure3/gapbs/pr_twitter/
   runs/
 ```
 
-GAPBS runtime is the geometric mean of `Trial Time` records 6–10 from exactly 10 trials.
-The plot reports `baseline_seconds / method_seconds`.
-Values above `1.0` indicate a speedup over the CXL-only Baseline.
+GAPBS runtime is the geometric mean of `Trial Time` records 6–10 from exactly 10 trials. The plot reports `baseline_seconds / method_seconds`. Values above `1.0` indicate a speedup over the CXL-only Baseline.
 
 ## Optional experiments
 
@@ -152,5 +138,4 @@ The [detailed Figure 3 guide](FIGURE3_REPRODUCTION.md) documents:
 
 ## Licenses
 
-SPEC CPU2017, GAPBS, graph data, and `damo` retain their own licenses.
-See [Third-party and component notices](THIRD_PARTY_NOTICES.md) before redistribution.
+SPEC CPU2017, GAPBS, graph data, and `damo` retain their own licenses. See [Third-party and component notices](THIRD_PARTY_NOTICES.md) before redistribution.
