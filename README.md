@@ -7,7 +7,7 @@ It includes the custom RTL, FPGA images, host software, experiment scripts, and 
 
 | Directory | Experiment |
 |---|---|
-| [`AE1/`](AE1/) | Figures 2, 5, 7: per-page access-distribution and hot-page analysis from bundled CXL traces. Software-only (`python3`), no FPGA or SPR1 host. |
+| [`AE1/`](AE1/) | Figures 2, 5, 7: per-page access-distribution and hot-page analysis from bundled CXL traces. Software-only (`python3`). |
 | [`AE2/`](AE2/) | Figure 4: memory usage and migration traffic for SPEC CPU2017 `gcc`. |
 | [`AE3/`](AE3/) | Figure 3: CXL-only, AutoNUMA, DAMON, CHMU-Cache, and CHMU-CMS comparison. |
 | [`AE4/`](AE4/) | Figure 11: static CHMU policies and ARC adaptive selection. |
@@ -20,6 +20,10 @@ the derived CSVs and references the CXL-Tracer collection framework as a
 submodule, initialized with `git submodule update --init --recursive`.
 
 ## Requirements
+
+AE1 is software-only. It needs only `python3` with Matplotlib, NumPy, and
+pandas, and none of the hardware, host, or benchmark requirements below. The
+rest of this section applies to AE2, AE3, and AE4.
 
 ### Hardware
 
@@ -121,6 +125,25 @@ The setup checks the platform, builds the host tools, loads the bundled modules,
 
 ## Experiments
 
+### AE1: Figures 2, 5, 7
+
+AE1 is independent of the Common setup above: it needs no FPGA, SPR1 host, or
+custom kernel. It renders the per-page access-distribution and hot-page
+analysis figures from the CXL traces bundled under `AE1/trace_analysis/traces/`.
+
+```bash
+cd MICRO-2026-ARC/AE1
+bash trace_analysis/figure2/run_fig2.sh
+bash trace_analysis/figure5/run_fig5.sh
+bash trace_analysis/figure7/run_fig7.sh
+```
+
+Each runner writes its `generated_fig*.png` panels beside the shipped
+`expected_fig*.png` references. The traces were captured with the CXL-Tracer
+framework included as a submodule; collecting them is out of scope for this
+artifact. See [`AE1/README.md`](AE1/README.md) for the figure descriptions and
+the optional path that rebuilds the bundled CSVs from the raw traces.
+
 ### AE2: Figure 4
 
 AE2 runs eight copies of SPEC CPU2017 `gcc` with CHMU-Cache at thresholds 32 and 96.
@@ -162,6 +185,7 @@ See [`AE4/README.md`](AE4/README.md) for the combined plot and optional retraini
 
 ## Expected results
 
+- AE1 renders Figures 2, 5, and 7 as PNG panels from the bundled traces, with the published `expected_*.png` panels shipped alongside for reference.
 - AE2 produces local-memory, CXL-memory, and migration-traffic plots for thresholds 32 and 96.
 - AE3 reports normalized performance as `CXL-only time / method time` for eleven methods.
 - AE4 reports the same normalization for three workloads and their geometric mean.
@@ -171,6 +195,7 @@ Data collection and plotting are separate so plots can be regenerated without re
 
 ## Optional workflows
 
+- AE1 can rebuild its bundled CSVs from the raw `.bin` traces with `AE1/trace_analysis/regenerate.sh`, using the vendored trace parser.
 - AE3 provides additional GAPBS and SPEC workloads, epoch sweeps, and FPGA sampling studies.
 - AE4 provides current-system trial collection and GAPBS-only leave-one-benchmark-out retraining.
 - The kernel directory provides the optional one-time kernel build and installation procedure.
@@ -179,4 +204,4 @@ Data collection and plotting are separate so plots can be regenerated without re
 
 The repository-level MIT license does not replace licenses attached to copied components.
 SPEC CPU2017, GAPBS data, DAMON, Intel FPGA packages, and generated IP retain their own licenses.
-See the `THIRD_PARTY_NOTICES.md` files under `AE2/`, `AE3/`, `AE4/`, [`kernel/`](kernel/THIRD_PARTY_NOTICES.md), and [`rtl/`](rtl/THIRD_PARTY_NOTICES.md).
+See the `THIRD_PARTY_NOTICES.md` files under [`AE1/`](AE1/THIRD_PARTY_NOTICES.md), `AE2/`, `AE3/`, `AE4/`, [`kernel/`](kernel/THIRD_PARTY_NOTICES.md), and [`rtl/`](rtl/THIRD_PARTY_NOTICES.md).
