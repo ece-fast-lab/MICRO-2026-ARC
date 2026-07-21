@@ -17,7 +17,7 @@ AE2 reproduces Figure 4 for SPEC CPU2017 `gcc` at CHMU thresholds 32 and 96 and 
 
 ## Prerequisites
 
-Use the dedicated AE host with PCI device `8086:0ddb`, Node 0 as Local memory, and Node 1 as CXL memory. Run all commands from the reviewer account because the scripts invoke `sudo` only for privileged operations. Do not use `sudo -i` or prefix an entire command with `sudo`. Install SPEC CPU2017 separately because it is not included in this artifact.
+Use the dedicated AE host with PCI device, Node 0 as Local memory, and Node 1 as CXL memory. Run all commands from the reviewer account because the scripts invoke `sudo` only for privileged operations. Do not use `sudo -i` or prefix an entire command with `sudo`. Install SPEC CPU2017 separately because it is not included in this artifact.
 
 The AE host must run kernel `6.11.0-mig-offload+` with these boot arguments:
 
